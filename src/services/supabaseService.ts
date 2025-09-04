@@ -2209,6 +2209,34 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
     }
   }
 
+  async createDiscount(discountData: any): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('discounts')
+        .insert(discountData)
+        .select()
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: `Failed to create discount: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Create discount error:', error);
+      return {
+        success: false,
+        error: 'Failed to create discount'
+      };
+    }
+  }
+
   async applyDiscountToOrder(orderId: string, discountId: string, discountAmount: number): Promise<ApiResponse<any>> {
     try {
       const { data, error } = await this.client

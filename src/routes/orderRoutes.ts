@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { supabaseService } from '../services/supabaseService';
 import { logger } from '../utils/logger';
-import { cashierOrAdmin, kitchenOrAdmin } from '../middleware/authMiddleware';
+import { cashierOrAdmin, kitchenOrAdmin, adminOnly } from '../middleware/authMiddleware';
 
 const router = Router();
 
@@ -520,6 +520,63 @@ router.get('/discounts/available', cashierOrAdmin, async (_req: Request, res: Re
   }
 });
 
+// Create discount (Admin only)
+router.post('/discounts', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const {
+      code,
+      name,
+      description,
+      discount_type,
+      discount_value,
+      minimum_order_amount,
+      maximum_discount_amount,
+      valid_until
+    } = req.body;
+
+    if (!code || !name || !discount_type || !discount_value) {
+      return res.status(400).json({
+        success: false,
+        error: 'Code, name, discount_type, and discount_value are required'
+      });
+    }
+
+    const discountData = {
+      code: code.toUpperCase(),
+      name,
+      description,
+      discount_type,
+      discount_value: parseFloat(discount_value),
+      minimum_order_amount: minimum_order_amount ? parseFloat(minimum_order_amount) : 0,
+      maximum_discount_amount: maximum_discount_amount ? parseFloat(maximum_discount_amount) : null,
+      valid_until: valid_until || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // 1 year from now
+      created_by: req.user.id
+    };
+
+    const result = await supabaseService().createDiscount(discountData);
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Discount created successfully',
+      data: result.data
+    });
+
+  } catch (error) {
+    logger.error('Create discount error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to create discount'
+    });
+  }
+});
+
 // Apply discount to order (Cashier/Admin)
 router.post('/:orderId/discounts', cashierOrAdmin, async (req: Request, res: Response) => {
   try {
@@ -668,9 +725,21 @@ router.put('/:orderId/status', kitchenOrAdmin, async (req: Request, res: Respons
       });
     }
 
+    // Check if order exists first
+    const orderCheck = await supabaseService().getOrderById(orderId);
+    if (!orderCheck.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    logger.info(`Updating order ${orderId} status to ${status} by user ${req.user.id}`);
+
     const result = await supabaseService().updateOrderStatus(orderId, status, req.user.id, notes);
 
     if (!result.success) {
+      logger.error(`Failed to update order status: ${result.error}`);
       return res.status(500).json({
         success: false,
         error: result.error
