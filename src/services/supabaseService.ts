@@ -29,6 +29,11 @@ export class SupabaseService {
     logger.info('Supabase client initialized');
   }
 
+  // Public method to access the Supabase client
+  public getClient() {
+    return this.client;
+  }
+
   // Helper function to convert DatabaseUser to User
   private mapDatabaseUserToUser(dbUser: DatabaseUser): User {
     const user: User = {
@@ -245,9 +250,22 @@ export class SupabaseService {
 
   async updateUserProfile(userId: string, updateData: Partial<User>): Promise<ApiResponse<User>> {
     try {
+      // Map camelCase to snake_case for DB columns
+      const mapped: Record<string, any> = {};
+      if (updateData.username !== undefined) mapped['username'] = updateData.username;
+      if (updateData.email !== undefined) mapped['email'] = updateData.email;
+      if (updateData.firstName !== undefined) mapped['first_name'] = updateData.firstName;
+      if (updateData.lastName !== undefined) mapped['last_name'] = updateData.lastName;
+      if (updateData.role !== undefined) mapped['role'] = updateData.role;
+      if (updateData.phone !== undefined) mapped['phone'] = updateData.phone;
+      if (updateData.isActive !== undefined) mapped['is_active'] = updateData.isActive;
+      if (updateData.avatarUrl !== undefined) mapped['avatar_url'] = updateData.avatarUrl;
+      if (updateData.lastLogin !== undefined) mapped['last_login'] = updateData.lastLogin as any;
+      mapped['updated_at'] = new Date().toISOString();
+
       const { data, error } = await this.client
         .from('user_profiles')
-        .update(updateData)
+        .update(mapped)
         .eq('id', userId)
         .select()
         .single();
@@ -330,8 +348,8 @@ export class SupabaseService {
     }
   }
 
-  // Order methods
-  async getOrders(limit = 50, offset = 0): Promise<ApiResponse<Order[]>> {
+  // Legacy order methods (kept for backward compatibility)
+  async getOrdersLegacy(limit = 50, offset = 0): Promise<ApiResponse<Order[]>> {
     try {
       const { data, error } = await this.client
         .from('orders')
@@ -362,7 +380,7 @@ export class SupabaseService {
     }
   }
 
-  async createOrder(orderData: Partial<Order>): Promise<ApiResponse<Order>> {
+  async createOrderLegacy(orderData: Partial<Order>): Promise<ApiResponse<Order>> {
     try {
       const { data, error } = await this.client
         .from('orders')
@@ -390,7 +408,7 @@ export class SupabaseService {
     }
   }
 
-  async updateOrderStatus(orderId: string, status: string): Promise<ApiResponse<Order>> {
+  async updateOrderStatusLegacy(orderId: string, status: string): Promise<ApiResponse<Order>> {
     try {
       const { data, error } = await this.client
         .from('orders')
@@ -420,64 +438,77 @@ export class SupabaseService {
   }
 
   // Menu methods
-  async getMenuItems(page: number = 1, limit: number = 50, filters?: {
-    category?: string;
-    available?: boolean;
-    featured?: boolean;
-    search?: string;
-  }): Promise<ApiResponse<MenuItem[]>> {
-    try {
-      const offset = (page - 1) * limit;
-      let query = this.client
-        .from('menu_items')
-        .select(`
-          *,
-          menu_categories (name),
-          menu_item_ingredients (
-            *,
-            ingredients (*)
-          )
-        `)
-        .eq('is_active', true);
-
-      // Apply filters
-      if (filters?.category) {
-        query = query.eq('category_id', filters.category);
-      }
-      if (filters?.available !== undefined) {
-        query = query.eq('is_available', filters.available);
-      }
-      if (filters?.featured !== undefined) {
-        query = query.eq('is_featured', filters.featured);
-      }
-      if (filters?.search) {
-        query = query.ilike('name', `%${filters.search}%`);
-      }
-
-      const { data, error } = await query
-        .order('name')
-        .range(offset, offset + limit - 1);
-
-      if (error) {
-        return {
-          success: false,
-          error: 'Failed to fetch menu items'
-        };
-      }
-
-      return {
-        success: true,
-        data: data || []
-      };
-    } catch (error) {
-      logger.error('Get menu items error:', error);
+async getMenuItems(page: number = 1, limit: number = 50, filters?: {
+  category?: string;
+  available?: boolean;
+  featured?: boolean;
+  search?: string;
+}): Promise<ApiResponse<MenuItem[]>> {
+  try {
+    logger.info('getMenuItems called with:', { page, limit, filters });
+    
+    const offset = (page - 1) * limit;
+    
+    // Use the exact same query as the test endpoint that works
+    const { data, error } = await this.client
+      .from('menu_items')
+      .select('*');
+    
+    logger.info('getMenuItems query result:', { 
+      dataCount: data?.length || 0, 
+      error: error?.message || 'none' 
+    });
+    
+    if (error) {
+      logger.error('Supabase error in getMenuItems:', error);
       return {
         success: false,
-        error: 'Failed to get menu items'
+        error: `Failed to fetch menu items: ${error.message}`
       };
     }
-  }
 
+    // Filter by is_active = true (same as test endpoint)
+    let finalData = (data || []).filter(item => item.is_active === true);
+    
+    logger.info('After is_active filter:', { count: finalData.length });
+
+    // Apply additional filters if provided
+    if (filters?.category) {
+      finalData = finalData.filter(item => item.category_id === filters.category);
+      logger.info('After category filter:', { count: finalData.length });
+    }
+    if (filters?.available !== undefined) {
+      finalData = finalData.filter(item => item.is_available === filters.available);
+      logger.info('After available filter:', { count: finalData.length });
+    }
+    if (filters?.featured !== undefined) {
+      finalData = finalData.filter(item => item.is_featured === filters.featured);
+      logger.info('After featured filter:', { count: finalData.length });
+    }
+    if (filters?.search) {
+      finalData = finalData.filter(item => 
+        item.name.toLowerCase().includes(filters.search!.toLowerCase())
+      );
+      logger.info('After search filter:', { count: finalData.length });
+    }
+    
+    // Apply pagination
+    const paginatedData = finalData.slice(offset, offset + limit);
+    
+    logger.info(`Final result: ${paginatedData.length} items after filtering and pagination`);
+    
+    return {
+      success: true,
+      data: paginatedData
+    };
+  } catch (error) {
+    logger.error('Get menu items error:', error);
+    return {
+      success: false,
+      error: 'Failed to get menu items'
+    };
+  }
+}
   async getMenuItemById(id: string): Promise<ApiResponse<MenuItem>> {
     try {
       const { data, error } = await this.client
@@ -629,7 +660,131 @@ export class SupabaseService {
     }
   }
 
-  // Inventory methods
+  async getMenuCategoryById(id: string): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('menu_categories')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Menu category not found'
+        };
+      }
+
+      return { success: true, data };
+    } catch (error) {
+      logger.error('Get menu category error:', error);
+      return { success: false, error: 'Failed to get menu category' };
+    }
+  }
+
+  async createMenuCategory(categoryData: any): Promise<ApiResponse<any>> {
+    try {
+      const insertData: Record<string, any> = {
+        name: categoryData.name,
+        description: categoryData.description ?? null,
+        image_url: categoryData.image_url ?? null,
+        sort_order: categoryData.sort_order ?? 0,
+        is_active: categoryData.is_active !== undefined ? categoryData.is_active : true,
+        image_filename: categoryData.image_filename ?? null,
+        image_mime_type: categoryData.image_mime_type ?? null,
+        image_size: categoryData.image_size ?? null,
+        image_alt_text: categoryData.image_alt_text ?? null
+      };
+
+      const { data, error } = await this.client
+        .from('menu_categories')
+        .insert(insertData)
+        .select()
+        .single();
+
+      if (error) {
+        return { success: false, error: `Failed to create category: ${error.message}` };
+      }
+
+      return { success: true, data };
+    } catch (error) {
+      logger.error('Create category error:', error);
+      return { success: false, error: 'Failed to create category' };
+    }
+  }
+
+  async updateMenuCategory(id: string, updateData: any): Promise<ApiResponse<any>> {
+    try {
+      const mapped: Record<string, any> = {};
+      if (updateData.name !== undefined) mapped['name'] = updateData.name;
+      if (updateData.description !== undefined) mapped['description'] = updateData.description;
+      if (updateData.image_url !== undefined) mapped['image_url'] = updateData.image_url;
+      if (updateData.sort_order !== undefined) mapped['sort_order'] = parseInt(updateData.sort_order, 10);
+      if (updateData.is_active !== undefined) mapped['is_active'] = !!updateData.is_active;
+      if (updateData.image_filename !== undefined) mapped['image_filename'] = updateData.image_filename;
+      if (updateData.image_mime_type !== undefined) mapped['image_mime_type'] = updateData.image_mime_type;
+      if (updateData.image_size !== undefined) mapped['image_size'] = parseInt(updateData.image_size, 10);
+      if (updateData.image_alt_text !== undefined) mapped['image_alt_text'] = updateData.image_alt_text;
+      mapped['updated_at'] = new Date().toISOString();
+
+      const { data, error } = await this.client
+        .from('menu_categories')
+        .update(mapped)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) {
+        return { success: false, error: 'Failed to update category' };
+      }
+
+      return { success: true, data };
+    } catch (error) {
+      logger.error('Update category error:', error);
+      return { success: false, error: 'Failed to update category' };
+    }
+  }
+
+  async deleteMenuCategory(id: string): Promise<ApiResponse<boolean>> {
+    try {
+      const { error } = await this.client
+        .from('menu_categories')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) {
+        return { success: false, error: 'Failed to delete category' };
+      }
+
+      return { success: true, data: true };
+    } catch (error) {
+      logger.error('Delete category error:', error);
+      return { success: false, error: 'Failed to delete category' };
+    }
+  }
+
+  async getMenuItemsWithCategories(): Promise<ApiResponse<any[]>> {
+    try {
+      const { data, error } = await this.client
+        .from('menu_items')
+        .select(`
+          *,
+          menu_categories:menu_categories!menu_items_category_id_fkey (id, name, image_url)
+        `)
+        .eq('is_active', true);
+
+      if (error) {
+        return { success: false, error: 'Failed to fetch items with categories' };
+      }
+
+      return { success: true, data: data || [] };
+    } catch (error) {
+      logger.error('Get items with categories error:', error);
+      return { success: false, error: 'Failed to get items with categories' };
+    }
+  }
+
+  // Legacy inventory method (kept for backward compatibility)
   async getIngredients(): Promise<ApiResponse<Ingredient[]>> {
     try {
       const { data, error } = await this.client
@@ -697,7 +852,7 @@ export class SupabaseService {
         .from('user_profiles')
         .select('*')
         .eq('is_active', true)
-        .order('firstName');
+        .order('first_name');
 
       if (error) {
         return {
@@ -1047,6 +1202,1073 @@ export class SupabaseService {
       return {
         success: false,
         error: 'Failed to resolve conflict'
+      };
+    }
+  }
+
+  // =====================================================
+  // INVENTORY MANAGEMENT METHODS
+  // =====================================================
+
+  // Enhanced ingredients CRUD (new implementation)
+  async getIngredientsEnhanced(): Promise<ApiResponse<Ingredient[]>> {
+    try {
+      const { data, error } = await this.client
+        .from('ingredients')
+        .select('*')
+        .eq('is_active', true)
+        .order('name');
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to fetch ingredients'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get ingredients error:', error);
+      return {
+        success: false,
+        error: 'Failed to get ingredients'
+      };
+    }
+  }
+
+  async getIngredientById(id: string): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('ingredients')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Ingredient not found'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Get ingredient error:', error);
+      return {
+        success: false,
+        error: 'Failed to get ingredient'
+      };
+    }
+  }
+
+  async createIngredient(ingredientData: any): Promise<ApiResponse<any>> {
+    try {
+      const insertData: Record<string, any> = {
+        name: ingredientData.name,
+        description: ingredientData.description ?? null,
+        unit: ingredientData.unit ?? 'pieces',
+        current_stock: ingredientData.current_stock ?? 0,
+        min_stock_threshold: ingredientData.min_stock_threshold ?? 0,
+        max_stock_threshold: ingredientData.max_stock_threshold ?? null,
+        cost_per_unit: ingredientData.cost_per_unit ?? null,
+        supplier: ingredientData.supplier ?? null,
+        category: ingredientData.category ?? null,
+        storage_location: ingredientData.storage_location ?? null,
+        expiry_date: ingredientData.expiry_date ?? null,
+        is_active: ingredientData.is_active !== undefined ? ingredientData.is_active : true,
+        created_by: ingredientData.created_by ?? null,
+        updated_by: ingredientData.updated_by ?? null
+      };
+
+      const { data, error } = await this.client
+        .from('ingredients')
+        .insert(insertData)
+        .select()
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: `Failed to create ingredient: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Create ingredient error:', error);
+      return {
+        success: false,
+        error: 'Failed to create ingredient'
+      };
+    }
+  }
+
+  async updateIngredient(id: string, updateData: any): Promise<ApiResponse<any>> {
+    try {
+      const mapped: Record<string, any> = {};
+      if (updateData.name !== undefined) mapped['name'] = updateData.name;
+      if (updateData.description !== undefined) mapped['description'] = updateData.description;
+      if (updateData.unit !== undefined) mapped['unit'] = updateData.unit;
+      if (updateData.current_stock !== undefined) mapped['current_stock'] = parseFloat(updateData.current_stock);
+      if (updateData.min_stock_threshold !== undefined) mapped['min_stock_threshold'] = parseFloat(updateData.min_stock_threshold);
+      if (updateData.max_stock_threshold !== undefined) mapped['max_stock_threshold'] = updateData.max_stock_threshold ? parseFloat(updateData.max_stock_threshold) : null;
+      if (updateData.cost_per_unit !== undefined) mapped['cost_per_unit'] = updateData.cost_per_unit ? parseFloat(updateData.cost_per_unit) : null;
+      if (updateData.supplier !== undefined) mapped['supplier'] = updateData.supplier;
+      if (updateData.category !== undefined) mapped['category'] = updateData.category;
+      if (updateData.storage_location !== undefined) mapped['storage_location'] = updateData.storage_location;
+      if (updateData.expiry_date !== undefined) mapped['expiry_date'] = updateData.expiry_date;
+      if (updateData.is_active !== undefined) mapped['is_active'] = !!updateData.is_active;
+      if (updateData.updated_by !== undefined) mapped['updated_by'] = updateData.updated_by;
+      mapped['updated_at'] = new Date().toISOString();
+
+      const { data, error } = await this.client
+        .from('ingredients')
+        .update(mapped)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to update ingredient'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Update ingredient error:', error);
+      return {
+        success: false,
+        error: 'Failed to update ingredient'
+      };
+    }
+  }
+
+  async deleteIngredient(id: string): Promise<ApiResponse<boolean>> {
+    try {
+      const { error } = await this.client
+        .from('ingredients')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to delete ingredient'
+        };
+      }
+
+      return {
+        success: true,
+        data: true
+      };
+    } catch (error) {
+      logger.error('Delete ingredient error:', error);
+      return {
+        success: false,
+        error: 'Failed to delete ingredient'
+      };
+    }
+  }
+
+  // Stock movements
+  async getStockMovements(ingredientId?: string, limit = 50, offset = 0): Promise<ApiResponse<any[]>> {
+    try {
+      let query = this.client
+        .from('stock_movements')
+        .select(`
+          *,
+          ingredient:ingredients!stock_movements_ingredient_id_fkey (name, unit),
+          performed_by_user:user_profiles!stock_movements_performed_by_fkey (username, first_name, last_name)
+        `)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (ingredientId) {
+        query = query.eq('ingredient_id', ingredientId);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to fetch stock movements'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get stock movements error:', error);
+      return {
+        success: false,
+        error: 'Failed to get stock movements'
+      };
+    }
+  }
+
+  async createStockMovement(movementData: any): Promise<ApiResponse<any>> {
+    try {
+      const insertData: Record<string, any> = {
+        ingredient_id: movementData.ingredient_id,
+        movement_type: movementData.movement_type,
+        quantity: parseFloat(movementData.quantity),
+        reason: movementData.reason ?? null,
+        reference_number: movementData.reference_number ?? null,
+        notes: movementData.notes ?? null,
+        performed_by: movementData.performed_by
+      };
+
+      const { data, error } = await this.client
+        .from('stock_movements')
+        .insert(insertData)
+        .select(`
+          *,
+          ingredient:ingredients!stock_movements_ingredient_id_fkey (name, unit),
+          performed_by_user:user_profiles!stock_movements_performed_by_fkey (username, first_name, last_name)
+        `)
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: `Failed to create stock movement: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Create stock movement error:', error);
+      return {
+        success: false,
+        error: 'Failed to create stock movement'
+      };
+    }
+  }
+
+  // Menu item ingredients
+  async getMenuItemIngredients(menuItemId: string): Promise<ApiResponse<any[]>> {
+    try {
+      const { data, error } = await this.client
+        .from('menu_item_ingredients')
+        .select(`
+          *,
+          ingredient:ingredients!menu_item_ingredients_ingredient_id_fkey (name, unit, current_stock, min_stock_threshold)
+        `)
+        .eq('menu_item_id', menuItemId);
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to fetch menu item ingredients'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get menu item ingredients error:', error);
+      return {
+        success: false,
+        error: 'Failed to get menu item ingredients'
+      };
+    }
+  }
+
+  async createMenuItemIngredient(linkData: any): Promise<ApiResponse<any>> {
+    try {
+      const insertData: Record<string, any> = {
+        menu_item_id: linkData.menu_item_id,
+        ingredient_id: linkData.ingredient_id,
+        quantity_required: parseFloat(linkData.quantity_required),
+        unit: linkData.unit,
+        is_optional: linkData.is_optional ?? false,
+        created_by: linkData.created_by
+      };
+
+      const { data, error } = await this.client
+        .from('menu_item_ingredients')
+        .insert(insertData)
+        .select(`
+          *,
+          ingredient:ingredients!menu_item_ingredients_ingredient_id_fkey (name, unit, current_stock)
+        `)
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: `Failed to link ingredient: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Create menu item ingredient error:', error);
+      return {
+        success: false,
+        error: 'Failed to link ingredient'
+      };
+    }
+  }
+
+  async updateMenuItemIngredient(id: string, updateData: any): Promise<ApiResponse<any>> {
+    try {
+      const mapped: Record<string, any> = {};
+      if (updateData.quantity_required !== undefined) mapped['quantity_required'] = parseFloat(updateData.quantity_required);
+      if (updateData.unit !== undefined) mapped['unit'] = updateData.unit;
+      if (updateData.is_optional !== undefined) mapped['is_optional'] = !!updateData.is_optional;
+
+      const { data, error } = await this.client
+        .from('menu_item_ingredients')
+        .update(mapped)
+        .eq('id', id)
+        .select(`
+          *,
+          ingredient:ingredients!menu_item_ingredients_ingredient_id_fkey (name, unit, current_stock)
+        `)
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to update ingredient link'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Update menu item ingredient error:', error);
+      return {
+        success: false,
+        error: 'Failed to update ingredient link'
+      };
+    }
+  }
+
+  async deleteMenuItemIngredient(id: string): Promise<ApiResponse<boolean>> {
+    try {
+      const { error } = await this.client
+        .from('menu_item_ingredients')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to unlink ingredient'
+        };
+      }
+
+      return {
+        success: true,
+        data: true
+      };
+    } catch (error) {
+      logger.error('Delete menu item ingredient error:', error);
+      return {
+        success: false,
+        error: 'Failed to unlink ingredient'
+      };
+    }
+  }
+
+  // Stock alerts
+  async getStockAlerts(resolved?: boolean): Promise<ApiResponse<any[]>> {
+    try {
+      let query = this.client
+        .from('stock_alerts')
+        .select(`
+          *,
+          ingredient:ingredients!stock_alerts_ingredient_id_fkey (name, unit),
+          resolved_by_user:user_profiles!stock_alerts_resolved_by_fkey (username, first_name, last_name)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (resolved !== undefined) {
+        query = query.eq('is_resolved', resolved);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to fetch stock alerts'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get stock alerts error:', error);
+      return {
+        success: false,
+        error: 'Failed to get stock alerts'
+      };
+    }
+  }
+
+  async resolveStockAlert(alertId: string, resolvedBy: string): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('stock_alerts')
+        .update({
+          is_resolved: true,
+          resolved_by: resolvedBy,
+          resolved_at: new Date().toISOString()
+        })
+        .eq('id', alertId)
+        .select()
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to resolve alert'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Resolve stock alert error:', error);
+      return {
+        success: false,
+        error: 'Failed to resolve alert'
+      };
+    }
+  }
+
+  // Inventory reports
+  async getInventoryReport(): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('ingredients_stock_status')
+        .select('*')
+        .order('stock_status', { ascending: true });
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to fetch inventory report'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get inventory report error:', error);
+      return {
+        success: false,
+        error: 'Failed to get inventory report'
+      };
+    }
+  }
+
+  async getMenuAvailabilityReport(): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('menu_items_ingredient_availability')
+        .select('*')
+        .order('ingredient_status', { ascending: true });
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to fetch menu availability report'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get menu availability report error:', error);
+      return {
+        success: false,
+        error: 'Failed to get menu availability report'
+      };
+    }
+  }
+
+  // =====================================================
+  // ORDER MANAGEMENT METHODS
+  // =====================================================
+
+  // Orders CRUD
+  async getOrders(limit = 50, offset = 0, status?: string, orderType?: string): Promise<ApiResponse<any[]>> {
+    try {
+      let query = this.client
+        .from('order_summary')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (status) {
+        query = query.eq('status', status);
+      }
+
+      if (orderType) {
+        query = query.eq('order_type', orderType);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to fetch orders'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get orders error:', error);
+      return {
+        success: false,
+        error: 'Failed to get orders'
+      };
+    }
+  }
+
+  async getOrderById(id: string): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('order_summary')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Order not found'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Get order error:', error);
+      return {
+        success: false,
+        error: 'Failed to get order'
+      };
+    }
+  }
+
+  async getOrderByNumber(orderNumber: string): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('order_summary')
+        .select('*')
+        .eq('order_number', orderNumber)
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Order not found'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Get order by number error:', error);
+      return {
+        success: false,
+        error: 'Failed to get order'
+      };
+    }
+  }
+
+  async createOrder(orderData: any): Promise<ApiResponse<any>> {
+    try {
+      const insertData: Record<string, any> = {
+        customer_name: orderData.customer_name,
+        customer_phone: orderData.customer_phone,
+        order_type: orderData.order_type,
+        special_instructions: orderData.special_instructions,
+        table_number: orderData.table_number,
+        estimated_prep_time: orderData.estimated_prep_time,
+        created_by: orderData.created_by
+      };
+
+      const { data, error } = await this.client
+        .from('orders')
+        .insert(insertData)
+        .select()
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: `Failed to create order: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Create order error:', error);
+      return {
+        success: false,
+        error: 'Failed to create order'
+      };
+    }
+  }
+
+  async updateOrderStatus(id: string, status: string, updatedBy: string, notes?: string): Promise<ApiResponse<any>> {
+    try {
+      const updateData: Record<string, any> = {
+        status,
+        updated_by: updatedBy,
+        updated_at: new Date().toISOString()
+      };
+
+      // Set completion time if order is completed
+      if (status === 'completed') {
+        updateData['completed_at'] = new Date().toISOString();
+      }
+
+      const { data, error } = await this.client
+        .from('orders')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to update order status'
+        };
+      }
+
+      // Record status change in history
+      await this.client
+        .from('order_status_history')
+        .insert({
+          order_id: id,
+          status,
+          notes: notes || 'Status updated',
+          updated_by: updatedBy
+        });
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Update order status error:', error);
+      return {
+        success: false,
+        error: 'Failed to update order status'
+      };
+    }
+  }
+
+  async updateOrderPayment(id: string, paymentStatus: string, paymentMethod?: string, updatedBy?: string): Promise<ApiResponse<any>> {
+    try {
+      const updateData: Record<string, any> = {
+        payment_status: paymentStatus,
+        updated_at: new Date().toISOString()
+      };
+
+      if (paymentMethod) {
+        updateData['payment_method'] = paymentMethod;
+      }
+
+      if (updatedBy) {
+        updateData['updated_by'] = updatedBy;
+      }
+
+      const { data, error } = await this.client
+        .from('orders')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to update payment status'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Update order payment error:', error);
+      return {
+        success: false,
+        error: 'Failed to update payment status'
+      };
+    }
+  }
+
+  // Order items
+  async getOrderItems(orderId: string): Promise<ApiResponse<any[]>> {
+    try {
+      const { data, error } = await this.client
+        .from('order_items_detail')
+        .select('*')
+        .eq('order_id', orderId)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to fetch order items'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get order items error:', error);
+      return {
+        success: false,
+        error: 'Failed to get order items'
+      };
+    }
+  }
+
+  async addOrderItem(orderItemData: any): Promise<ApiResponse<any>> {
+    try {
+      const insertData: Record<string, any> = {
+        order_id: orderItemData.order_id,
+        menu_item_id: orderItemData.menu_item_id,
+        quantity: orderItemData.quantity,
+        unit_price: orderItemData.unit_price,
+        total_price: orderItemData.total_price,
+        customizations: orderItemData.customizations,
+        special_instructions: orderItemData.special_instructions
+      };
+
+      const { data, error } = await this.client
+        .from('order_items')
+        .insert(insertData)
+        .select(`
+          *,
+          menu_item:menu_items!order_items_menu_item_id_fkey (name, description, image_url)
+        `)
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: `Failed to add order item: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Add order item error:', error);
+      return {
+        success: false,
+        error: 'Failed to add order item'
+      };
+    }
+  }
+
+  async updateOrderItem(id: string, updateData: any): Promise<ApiResponse<any>> {
+    try {
+      const mapped: Record<string, any> = {};
+      if (updateData.quantity !== undefined) mapped['quantity'] = parseInt(updateData.quantity);
+      if (updateData.unit_price !== undefined) mapped['unit_price'] = parseFloat(updateData.unit_price);
+      if (updateData.total_price !== undefined) mapped['total_price'] = parseFloat(updateData.total_price);
+      if (updateData.customizations !== undefined) mapped['customizations'] = updateData.customizations;
+      if (updateData.special_instructions !== undefined) mapped['special_instructions'] = updateData.special_instructions;
+
+      const { data, error } = await this.client
+        .from('order_items')
+        .update(mapped)
+        .eq('id', id)
+        .select(`
+          *,
+          menu_item:menu_items!order_items_menu_item_id_fkey (name, description, image_url)
+        `)
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to update order item'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Update order item error:', error);
+      return {
+        success: false,
+        error: 'Failed to update order item'
+      };
+    }
+  }
+
+  async deleteOrderItem(id: string): Promise<ApiResponse<boolean>> {
+    try {
+      const { error } = await this.client
+        .from('order_items')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to delete order item'
+        };
+      }
+
+      return {
+        success: true,
+        data: true
+      };
+    } catch (error) {
+      logger.error('Delete order item error:', error);
+      return {
+        success: false,
+        error: 'Failed to delete order item'
+      };
+    }
+  }
+
+  // Kitchen orders
+  async getKitchenOrders(): Promise<ApiResponse<any[]>> {
+    try {
+      const { data, error } = await this.client
+        .from('kitchen_orders')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to fetch kitchen orders'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get kitchen orders error:', error);
+      return {
+        success: false,
+        error: 'Failed to get kitchen orders'
+      };
+    }
+  }
+
+  // Search orders
+  async searchOrders(searchTerm: string, limit = 50, offset = 0): Promise<ApiResponse<any[]>> {
+    try {
+      const { data, error } = await this.client
+        .from('order_summary')
+        .select('*')
+        .or(`customer_name.ilike.%${searchTerm}%,order_number.ilike.%${searchTerm}%`)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to search orders'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Search orders error:', error);
+      return {
+        success: false,
+        error: 'Failed to search orders'
+      };
+    }
+  }
+
+  // Discounts
+  async getDiscounts(): Promise<ApiResponse<any[]>> {
+    try {
+      const { data, error } = await this.client
+        .from('discounts')
+        .select('*')
+        .eq('is_active', true)
+        .gt('valid_until', new Date().toISOString())
+        .order('name');
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to fetch discounts'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get discounts error:', error);
+      return {
+        success: false,
+        error: 'Failed to get discounts'
+      };
+    }
+  }
+
+  async getDiscountByCode(code: string): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('discounts')
+        .select('*')
+        .eq('code', code.toUpperCase())
+        .eq('is_active', true)
+        .gt('valid_until', new Date().toISOString())
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Discount not found or expired'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Get discount by code error:', error);
+      return {
+        success: false,
+        error: 'Failed to get discount'
+      };
+    }
+  }
+
+  async applyDiscountToOrder(orderId: string, discountId: string, discountAmount: number): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('order_discounts')
+        .insert({
+          order_id: orderId,
+          discount_id: discountId,
+          discount_amount: discountAmount
+        })
+        .select()
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: `Failed to apply discount: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Apply discount error:', error);
+      return {
+        success: false,
+        error: 'Failed to apply discount'
+      };
+    }
+  }
+
+  // Order status history
+  async getOrderStatusHistory(orderId: string): Promise<ApiResponse<any[]>> {
+    try {
+      const { data, error } = await this.client
+        .from('order_status_history')
+        .select(`
+          *,
+          updated_by_user:user_profiles!order_status_history_updated_by_fkey (username, first_name, last_name)
+        `)
+        .eq('order_id', orderId)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Failed to fetch order status history'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get order status history error:', error);
+      return {
+        success: false,
+        error: 'Failed to get order status history'
       };
     }
   }

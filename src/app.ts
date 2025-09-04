@@ -76,6 +76,7 @@ app.get('/health', (_req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', authMiddleware, orderRoutes);
 app.use('/api/menu', authMiddleware, menuRoutes);
+app.use('/api/menus', authMiddleware, menuRoutes);
 app.use('/api/inventory', authMiddleware, inventoryRoutes);
 app.use('/api/customers', authMiddleware, customerRoutes);
 app.use('/api/employees', authMiddleware, employeeRoutes);

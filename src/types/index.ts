@@ -314,7 +314,8 @@ export interface WebSocketMessage {
 export interface OrderStatusUpdate {
   orderId: string;
   status: OrderStatus;
-  updatedBy: string;
+  updatedBy?: string;
+  notes?: string;
   timestamp: string;
 }
 

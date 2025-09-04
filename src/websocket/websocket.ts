@@ -31,7 +31,7 @@ export function setupWebSocket(io: Server): void {
     socket.on('order-status-updated', async (data: OrderStatusUpdate) => {
       try {
         // Update order status in database
-        await supabaseService().updateOrderStatus(data.orderId, data.status);
+        await supabaseService().updateOrderStatus(data.orderId, data.status, data.updatedBy || 'system', data.notes);
         
         // Notify cashier
         socket.to('role-cashier').emit('order-status-changed', data);
