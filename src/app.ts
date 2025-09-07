@@ -54,13 +54,38 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting
+// Rate limiting - More lenient for development
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  max: 1000, // limit each IP to 1000 requests per windowMs (increased for development)
+  message: {
+    error: 'Too many requests from this IP, please try again later.',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  // Skip rate limiting for development
+  skip: (req) => {
+    // Skip rate limiting in development environment
+    return process.env['NODE_ENV'] === 'development';
+  }
 });
 app.use('/api/', limiter);
+
+// Custom rate limit error handler
+app.use((req: any, res: any, next: any) => {
+  // Handle rate limit errors specifically
+  if (req.rateLimit && req.rateLimit.remaining === 0) {
+    return res.status(429).json({
+      success: false,
+      error: 'Too many requests from this IP, please try again later.',
+      retryAfter: Math.round(req.rateLimit.resetTime / 1000),
+      limit: req.rateLimit.limit,
+      remaining: req.rateLimit.remaining
+    });
+  }
+  next();
+});
 
 // Health check endpoint
 app.get('/health', (_req, res) => {

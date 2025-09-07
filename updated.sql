@@ -1,196 +1,220 @@
--- =====================================================
--- Clean Restaurant Management Schema
--- Focus: Menu Items + Authentication Only
--- Roles: admin, kitchen, cashier
--- =====================================================
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
 
--- Enable necessary extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- =====================================================
--- ENUMS AND TYPES
--- =====================================================
-
--- User roles (simplified)
-CREATE TYPE user_role AS ENUM ('admin', 'kitchen', 'cashier');
-
--- =====================================================
--- CORE TABLES
--- =====================================================
-
--- 1. User Profiles (Employees)
-CREATE TABLE public.user_profiles (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    username VARCHAR(50) UNIQUE NOT NULL,
-    first_name VARCHAR(100) NOT NULL,
-    last_name VARCHAR(100) NOT NULL,
-    role user_role NOT NULL DEFAULT 'cashier',
-    phone VARCHAR(20),
-    email VARCHAR(255),
-    avatar_url VARCHAR(255),
-    is_active BOOLEAN DEFAULT true,
-    last_login TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+CREATE TABLE public.discounts (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  code character varying NOT NULL UNIQUE,
+  name character varying NOT NULL,
+  description text,
+  discount_type character varying NOT NULL CHECK (discount_type::text = ANY (ARRAY['percentage'::character varying, 'fixed_amount'::character varying]::text[])),
+  discount_value numeric NOT NULL,
+  minimum_order_amount numeric DEFAULT 0,
+  maximum_discount_amount numeric,
+  is_active boolean DEFAULT true,
+  valid_from timestamp with time zone DEFAULT now(),
+  valid_until timestamp with time zone,
+  usage_limit integer,
+  used_count integer DEFAULT 0,
+  created_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT discounts_pkey PRIMARY KEY (id),
+  CONSTRAINT discounts_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id)
 );
-
--- 2. Menu Categories
+CREATE TABLE public.ingredients (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  name character varying NOT NULL UNIQUE,
+  description text,
+  unit character varying NOT NULL DEFAULT 'pieces'::character varying,
+  current_stock numeric NOT NULL DEFAULT 0,
+  min_stock_threshold numeric NOT NULL DEFAULT 0,
+  max_stock_threshold numeric,
+  cost_per_unit numeric,
+  supplier character varying,
+  category character varying,
+  storage_location character varying,
+  expiry_date date,
+  is_active boolean DEFAULT true,
+  created_by uuid,
+  updated_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT ingredients_pkey PRIMARY KEY (id),
+  CONSTRAINT ingredients_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT ingredients_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.user_profiles(id)
+);
 CREATE TABLE public.menu_categories (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(100) NOT NULL UNIQUE,
-    description TEXT,
-    image_url VARCHAR(255),
-    sort_order INTEGER DEFAULT 0,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  name character varying NOT NULL UNIQUE,
+  description text,
+  image_url character varying,
+  sort_order integer DEFAULT 0,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  image_file bytea,
+  image_filename character varying,
+  image_mime_type character varying,
+  image_size integer,
+  image_alt_text character varying,
+  image_uploaded_at timestamp with time zone DEFAULT now(),
+  created_by uuid,
+  updated_by uuid,
+  CONSTRAINT menu_categories_pkey PRIMARY KEY (id),
+  CONSTRAINT menu_categories_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT menu_categories_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.user_profiles(id)
 );
-
--- 3. Menu Items
+CREATE TABLE public.menu_item_ingredients (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  menu_item_id uuid NOT NULL,
+  ingredient_id uuid NOT NULL,
+  quantity_required numeric NOT NULL,
+  unit character varying NOT NULL,
+  is_optional boolean DEFAULT false,
+  created_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT menu_item_ingredients_pkey PRIMARY KEY (id),
+  CONSTRAINT menu_item_ingredients_ingredient_id_fkey FOREIGN KEY (ingredient_id) REFERENCES public.ingredients(id),
+  CONSTRAINT menu_item_ingredients_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT menu_item_ingredients_menu_item_id_fkey FOREIGN KEY (menu_item_id) REFERENCES public.menu_items(id)
+);
 CREATE TABLE public.menu_items (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    price DECIMAL(10,2) NOT NULL,
-    category_id UUID REFERENCES menu_categories(id),
-    image_url VARCHAR(255),
-    prep_time INTEGER NOT NULL DEFAULT 0, -- in minutes
-    is_available BOOLEAN DEFAULT true,
-    is_featured BOOLEAN DEFAULT false,
-    popularity INTEGER DEFAULT 0,
-    calories INTEGER,
-    allergens TEXT[],
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  name character varying NOT NULL,
+  description text,
+  price numeric NOT NULL,
+  category_id uuid,
+  image_url character varying,
+  prep_time integer NOT NULL DEFAULT 0,
+  is_available boolean DEFAULT true,
+  is_featured boolean DEFAULT false,
+  popularity integer DEFAULT 0,
+  calories integer,
+  allergens ARRAY,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  image_file bytea,
+  image_filename character varying,
+  image_mime_type character varying,
+  image_size integer,
+  image_alt_text character varying,
+  image_uploaded_at timestamp with time zone DEFAULT now(),
+  created_by uuid,
+  updated_by uuid,
+  CONSTRAINT menu_items_pkey PRIMARY KEY (id),
+  CONSTRAINT menu_items_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT menu_items_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.menu_categories(id),
+  CONSTRAINT menu_items_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.user_profiles(id)
 );
-
--- =====================================================
--- INDEXES FOR PERFORMANCE
--- =====================================================
-
--- Menu items indexes
-CREATE INDEX idx_menu_items_category_id ON menu_items(category_id);
-CREATE INDEX idx_menu_items_available ON menu_items(is_available);
-CREATE INDEX idx_menu_items_name ON menu_items(name);
-CREATE INDEX idx_menu_items_active ON menu_items(is_active);
-
--- User profiles indexes
-CREATE INDEX idx_user_profiles_username ON user_profiles(username);
-CREATE INDEX idx_user_profiles_role ON user_profiles(role);
-CREATE INDEX idx_user_profiles_active ON user_profiles(is_active);
-
--- =====================================================
--- TRIGGERS FOR UPDATED_AT
--- =====================================================
-
--- Function to update updated_at column
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ language 'plpgsql';
-
--- Create triggers
-CREATE TRIGGER update_user_profiles_updated_at BEFORE UPDATE ON user_profiles FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_menu_categories_updated_at BEFORE UPDATE ON menu_categories FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_menu_items_updated_at BEFORE UPDATE ON menu_items FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- =====================================================
--- ROW LEVEL SECURITY (RLS)
--- =====================================================
-
--- Enable RLS on tables
-ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE menu_categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE menu_items ENABLE ROW LEVEL SECURITY;
-
--- Create permissive policies for development
-CREATE POLICY "Allow all operations for development" ON user_profiles FOR ALL USING (true);
-CREATE POLICY "Allow all operations for development" ON menu_categories FOR ALL USING (true);
-CREATE POLICY "Allow all operations for development" ON menu_items FOR ALL USING (true);
-
--- =====================================================
--- SAMPLE DATA INSERTS
--- =====================================================
-
--- Insert sample menu categories
-INSERT INTO menu_categories (name, description, sort_order) VALUES
-('Main Dishes', 'Filipino main courses', 1),
-('Appetizers', 'Starters and snacks', 2),
-('Beverages', 'Drinks and refreshments', 3),
-('Desserts', 'Sweet treats', 4);
-
--- Insert sample menu items
-INSERT INTO menu_items (name, description, price, category_id, prep_time) VALUES
-('Chicken Adobo', 'Classic Filipino chicken adobo with soy sauce and vinegar', 180.00, (SELECT id FROM menu_categories WHERE name = 'Main Dishes'), 25),
-('Pork Adobo', 'Traditional pork adobo with garlic and bay leaves', 200.00, (SELECT id FROM menu_categories WHERE name = 'Main Dishes'), 30),
-('Sinigang na Baboy', 'Sour tamarind soup with pork and vegetables', 220.00, (SELECT id FROM menu_categories WHERE name = 'Main Dishes'), 35),
-('Lumpia', 'Fresh spring rolls with vegetables', 80.00, (SELECT id FROM menu_categories WHERE name = 'Appetizers'), 15),
-('Iced Tea', 'Refreshing iced tea', 45.00, (SELECT id FROM menu_categories WHERE name = 'Beverages'), 5),
-('Halo-halo', 'Mixed dessert with shaved ice and toppings', 120.00, (SELECT id FROM menu_categories WHERE name = 'Desserts'), 10);
-
--- Insert sample employees (simplified roles)
-INSERT INTO user_profiles (username, first_name, last_name, role, phone, email) VALUES
-('admin', 'Admin', 'User', 'admin', '+639123456789', 'admin@restaurant.com'),
-('cashier1', 'Maria', 'Santos', 'cashier', '+639234567890', 'maria@restaurant.com'),
-('kitchen1', 'Juan', 'Dela Cruz', 'kitchen', '+639345678901', 'juan@restaurant.com');
-
--- =====================================================
--- VIEWS FOR COMMON QUERIES
--- =====================================================
-
--- View for menu items with category names
-CREATE VIEW menu_items_with_categories AS
-SELECT 
-    mi.id,
-    mi.name,
-    mi.description,
-    mi.price,
-    mi.category_id,
-    mc.name as category_name,
-    mi.image_url,
-    mi.prep_time,
-    mi.is_available,
-    mi.is_featured,
-    mi.popularity,
-    mi.calories,
-    mi.allergens,
-    mi.is_active,
-    mi.created_at,
-    mi.updated_at
-FROM menu_items mi
-LEFT JOIN menu_categories mc ON mi.category_id = mc.id
-WHERE mi.is_active = true;
-
--- View for employee summary
-CREATE VIEW employee_summary AS
-SELECT 
-    id,
-    username,
-    first_name,
-    last_name,
-    role,
-    phone,
-    email,
-    is_active,
-    last_login,
-    created_at
-FROM user_profiles
-WHERE is_active = true
-ORDER BY role, first_name;
-
--- =====================================================
--- COMMENTS
--- =====================================================
-
-COMMENT ON TABLE user_profiles IS 'Employee profiles with role-based access (admin, kitchen, cashier)';
-COMMENT ON TABLE menu_items IS 'Menu items with pricing and preparation time';
-COMMENT ON TABLE menu_categories IS 'Menu categories for organizing items';
-
--- =====================================================
--- END OF SCHEMA
--- =====================================================
+CREATE TABLE public.order_discounts (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  order_id uuid NOT NULL,
+  discount_id uuid NOT NULL,
+  discount_amount numeric NOT NULL,
+  applied_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT order_discounts_pkey PRIMARY KEY (id),
+  CONSTRAINT order_discounts_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id),
+  CONSTRAINT order_discounts_discount_id_fkey FOREIGN KEY (discount_id) REFERENCES public.discounts(id)
+);
+CREATE TABLE public.order_items (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  order_id uuid NOT NULL,
+  menu_item_id uuid NOT NULL,
+  quantity integer NOT NULL DEFAULT 1,
+  unit_price numeric NOT NULL,
+  total_price numeric NOT NULL,
+  customizations text,
+  special_instructions text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT order_items_pkey PRIMARY KEY (id),
+  CONSTRAINT order_items_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id),
+  CONSTRAINT order_items_menu_item_id_fkey FOREIGN KEY (menu_item_id) REFERENCES public.menu_items(id)
+);
+CREATE TABLE public.order_status_history (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  order_id uuid NOT NULL,
+  status character varying NOT NULL,
+  notes text,
+  updated_by uuid NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT order_status_history_pkey PRIMARY KEY (id),
+  CONSTRAINT order_status_history_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id),
+  CONSTRAINT order_status_history_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.user_profiles(id)
+);
+CREATE TABLE public.orders (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  order_number character varying NOT NULL UNIQUE,
+  customer_name character varying,
+  customer_phone character varying,
+  order_type character varying NOT NULL CHECK (order_type::text = ANY (ARRAY['dine_in'::character varying, 'takeout'::character varying]::text[])),
+  status character varying NOT NULL DEFAULT 'pending'::character varying CHECK (status::text = ANY (ARRAY['pending'::character varying, 'preparing'::character varying, 'ready'::character varying, 'completed'::character varying, 'cancelled'::character varying]::text[])),
+  payment_status character varying NOT NULL DEFAULT 'unpaid'::character varying CHECK (payment_status::text = ANY (ARRAY['unpaid'::character varying, 'paid'::character varying, 'refunded'::character varying]::text[])),
+  payment_method character varying CHECK (payment_method::text = ANY (ARRAY['cash'::character varying, 'gcash'::character varying, 'card'::character varying]::text[])),
+  subtotal numeric NOT NULL DEFAULT 0,
+  discount_amount numeric DEFAULT 0,
+  tax_amount numeric DEFAULT 0,
+  total_amount numeric NOT NULL DEFAULT 0,
+  special_instructions text,
+  table_number character varying,
+  estimated_prep_time integer,
+  actual_prep_time integer,
+  created_by uuid NOT NULL,
+  updated_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  completed_at timestamp with time zone,
+  CONSTRAINT orders_pkey PRIMARY KEY (id),
+  CONSTRAINT orders_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT orders_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.user_profiles(id)
+);
+CREATE TABLE public.stock_alerts (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  ingredient_id uuid NOT NULL,
+  alert_type character varying NOT NULL CHECK (alert_type::text = ANY (ARRAY['low_stock'::character varying, 'out_of_stock'::character varying, 'expiry_warning'::character varying]::text[])),
+  current_stock numeric NOT NULL,
+  threshold_value numeric NOT NULL,
+  message text NOT NULL,
+  is_resolved boolean DEFAULT false,
+  resolved_by uuid,
+  resolved_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT stock_alerts_pkey PRIMARY KEY (id),
+  CONSTRAINT stock_alerts_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT stock_alerts_ingredient_id_fkey FOREIGN KEY (ingredient_id) REFERENCES public.ingredients(id)
+);
+CREATE TABLE public.stock_movements (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  ingredient_id uuid NOT NULL,
+  movement_type character varying NOT NULL CHECK (movement_type::text = ANY (ARRAY['in'::character varying, 'out'::character varying, 'adjustment'::character varying, 'spoilage'::character varying]::text[])),
+  quantity numeric NOT NULL,
+  reason character varying,
+  reference_number character varying,
+  notes text,
+  performed_by uuid NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT stock_movements_pkey PRIMARY KEY (id),
+  CONSTRAINT stock_movements_ingredient_id_fkey FOREIGN KEY (ingredient_id) REFERENCES public.ingredients(id),
+  CONSTRAINT stock_movements_performed_by_fkey FOREIGN KEY (performed_by) REFERENCES public.user_profiles(id)
+);
+CREATE TABLE public.user_profiles (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  username character varying NOT NULL UNIQUE,
+  first_name character varying NOT NULL,
+  last_name character varying NOT NULL,
+  role USER-DEFINED NOT NULL DEFAULT 'cashier'::user_role,
+  phone character varying,
+  email character varying,
+  avatar_url character varying,
+  is_active boolean DEFAULT true,
+  last_login timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  avatar_file bytea,
+  avatar_filename character varying,
+  avatar_mime_type character varying,
+  avatar_size integer,
+  avatar_alt_text character varying,
+  avatar_uploaded_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT user_profiles_pkey PRIMARY KEY (id)
+);

@@ -132,6 +132,15 @@ export interface MenuItem {
   createdAt: string;
   updatedAt: string;
   ingredients: MenuItemIngredient[];
+  // Image-related fields (matching database schema)
+  image_file?: Buffer;
+  image_filename?: string;
+  image_mime_type?: string;
+  image_size?: number;
+  image_alt_text?: string;
+  image_uploaded_at?: string;
+  created_by?: string;
+  updated_by?: string;
 }
 
 export interface MenuItemIngredient {
