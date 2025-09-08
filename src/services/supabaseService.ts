@@ -1865,6 +1865,8 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
 
   async updateOrderStatus(id: string, status: string, updatedBy: string, notes?: string): Promise<ApiResponse<any>> {
     try {
+      logger.info(`Updating order status: orderId=${id}, status=${status}, updatedBy=${updatedBy}, notes=${notes}`);
+      
       const updateData: Record<string, any> = {
         status,
         updated_by: updatedBy,
@@ -1876,6 +1878,8 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
         updateData['completed_at'] = new Date().toISOString();
       }
 
+      logger.info(`Update data:`, updateData);
+
       const { data, error } = await this.client
         .from('orders')
         .update(updateData)
@@ -1884,14 +1888,17 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
         .single();
 
       if (error) {
+        logger.error('Supabase error updating order status:', error);
         return {
           success: false,
-          error: 'Failed to update order status'
+          error: `Failed to update order status: ${error.message}`
         };
       }
 
+      logger.info('Order status updated successfully, recording history...');
+
       // Record status change in history
-      await this.client
+      const { error: historyError } = await this.client
         .from('order_status_history')
         .insert({
           order_id: id,
@@ -1899,6 +1906,11 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
           notes: notes || 'Status updated',
           updated_by: updatedBy
         });
+
+      if (historyError) {
+        logger.error('Error recording status history:', historyError);
+        // Don't fail the whole operation if history recording fails
+      }
 
       return {
         success: true,
@@ -1908,7 +1920,7 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
       logger.error('Update order status error:', error);
       return {
         success: false,
-        error: 'Failed to update order status'
+        error: `Failed to update order status: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
@@ -2297,6 +2309,121 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
       return {
         success: false,
         error: 'Failed to get order status history'
+      };
+    }
+  }
+
+  // Delete order (Admin only)
+  async deleteOrder(orderId: string, force: boolean = false): Promise<ApiResponse<any>> {
+    try {
+      logger.info(`Deleting order ${orderId}, force: ${force}`);
+
+      if (force) {
+        // Hard delete - completely remove from database
+        const { error } = await this.client
+          .from('orders')
+          .delete()
+          .eq('id', orderId);
+
+        if (error) {
+          logger.error('Hard delete order error:', error);
+          return {
+            success: false,
+            error: `Failed to delete order: ${error.message}`
+          };
+        }
+      } else {
+        // Soft delete - mark as cancelled and add deletion flag
+        const { error } = await this.client
+          .from('orders')
+          .update({
+            status: 'cancelled',
+            updated_at: new Date().toISOString(),
+            // You could add a deleted_at field if you want to track soft deletes
+          })
+          .eq('id', orderId);
+
+        if (error) {
+          logger.error('Soft delete order error:', error);
+          return {
+            success: false,
+            error: `Failed to cancel order: ${error.message}`
+          };
+        }
+      }
+
+      return {
+        success: true,
+        data: { orderId, deleted: true }
+      };
+    } catch (error) {
+      logger.error('Delete order error:', error);
+      return {
+        success: false,
+        error: 'Failed to delete order'
+      };
+    }
+  }
+
+  // Bulk delete orders (Admin only)
+  async bulkDeleteOrders(orderIds: string[], force: boolean = false): Promise<ApiResponse<any>> {
+    try {
+      logger.info(`Bulk deleting ${orderIds.length} orders, force: ${force}`);
+
+      let deletedCount = 0;
+      let failedCount = 0;
+      const failedOrders: Array<{id: string, error: string}> = [];
+
+      for (const orderId of orderIds) {
+        try {
+          // Check if order exists and can be deleted
+          const orderCheck = await this.getOrderById(orderId);
+          if (!orderCheck.success) {
+            failedOrders.push({ id: orderId, error: 'Order not found' });
+            failedCount++;
+            continue;
+          }
+
+          const order = orderCheck.data;
+
+          // Skip paid orders unless forced
+          if (order.payment_status === 'paid' && !force) {
+            failedOrders.push({ id: orderId, error: 'Cannot delete paid order' });
+            failedCount++;
+            continue;
+          }
+
+          // Delete the order
+          const deleteResult = await this.deleteOrder(orderId, force);
+          if (deleteResult.success) {
+            deletedCount++;
+          } else {
+            failedOrders.push({ id: orderId, error: deleteResult.error || 'Delete failed' });
+            failedCount++;
+          }
+        } catch (error) {
+          failedOrders.push({ 
+            id: orderId, 
+            error: error instanceof Error ? error.message : 'Unknown error' 
+          });
+          failedCount++;
+        }
+      }
+
+      return {
+        success: true,
+        data: {
+          deletedCount,
+          failedCount,
+          failedOrders,
+          totalProcessed: orderIds.length
+        }
+      };
+    } catch (error) {
+      logger.error('Bulk delete orders error:', error);
+      return {
+        success: false,
+        error: 'Failed to bulk delete orders'
       };
     }
   }
