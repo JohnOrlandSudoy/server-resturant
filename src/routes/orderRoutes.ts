@@ -667,6 +667,201 @@ router.post('/:orderId/discounts', cashierOrAdmin, async (req: Request, res: Res
 });
 
 // =====================================================
+// ADMIN ENDPOINTS
+// =====================================================
+
+// Delete order (Admin only)
+router.delete('/:orderId', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+    const { force } = req.query; // Optional force parameter for hard delete
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order ID is required'
+      });
+    }
+
+    // Check if order exists first
+    const orderCheck = await supabaseService().getOrderById(orderId);
+    if (!orderCheck.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    const order = orderCheck.data;
+
+    // Prevent deletion of orders that are already completed or have payments
+    if (order.payment_status === 'paid') {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot delete order that has been paid. Consider refunding instead.'
+      });
+    }
+
+    // For completed orders, require force parameter
+    if (order.status === 'completed' && force !== 'true') {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot delete completed order without force parameter. Add ?force=true to confirm deletion.'
+      });
+    }
+
+    logger.info(`Admin ${req.user.id} deleting order ${orderId} (status: ${order.status}, payment: ${order.payment_status})`);
+
+    const result = await supabaseService().deleteOrder(orderId, force === 'true');
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Order deleted successfully',
+      data: {
+        order_id: orderId,
+        order_number: order.order_number,
+        deleted_at: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    logger.error('Delete order error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to delete order'
+    });
+  }
+});
+
+// Bulk delete orders (Admin only)
+router.delete('/bulk/delete', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { orderIds, force } = req.body;
+
+    if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order IDs array is required'
+      });
+    }
+
+    if (orderIds.length > 50) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot delete more than 50 orders at once'
+      });
+    }
+
+    logger.info(`Admin ${req.user.id} bulk deleting ${orderIds.length} orders`);
+
+    const result = await supabaseService().bulkDeleteOrders(orderIds, force === true);
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: `Successfully deleted ${result.data.deletedCount} orders`,
+      data: {
+        deleted_count: result.data.deletedCount,
+        failed_count: result.data.failedCount,
+        failed_orders: result.data.failedOrders,
+        deleted_at: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    logger.error('Bulk delete orders error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to delete orders'
+    });
+  }
+});
+
+// Cancel order (Admin only) - Soft delete alternative
+router.put('/:orderId/cancel', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+    const { reason } = req.body;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order ID is required'
+      });
+    }
+
+    // Check if order exists
+    const orderCheck = await supabaseService().getOrderById(orderId);
+    if (!orderCheck.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    const order = orderCheck.data;
+
+    // Prevent cancellation of completed orders
+    if (order.status === 'completed') {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot cancel completed order'
+      });
+    }
+
+    // Prevent cancellation of paid orders
+    if (order.payment_status === 'paid') {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot cancel paid order. Process refund first.'
+      });
+    }
+
+    logger.info(`Admin ${req.user.id} cancelling order ${orderId}`);
+
+    const result = await supabaseService().updateOrderStatus(
+      orderId, 
+      'cancelled', 
+      req.user.id, 
+      reason || 'Order cancelled by admin'
+    );
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Order cancelled successfully',
+      data: result.data
+    });
+
+  } catch (error) {
+    logger.error('Cancel order error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to cancel order'
+    });
+  }
+});
+
+// =====================================================
 // KITCHEN ENDPOINTS
 // =====================================================
 
