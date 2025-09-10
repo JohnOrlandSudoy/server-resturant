@@ -1,5 +1,3 @@
-// Note: PayMongo SDK import - adjust based on actual package structure
-// import { PayMongo } from 'paymongo';
 import { logger } from '../utils/logger';
 
 /**
@@ -64,24 +62,177 @@ export interface WebhookEvent {
 }
 
 export class PayMongoService {
-  // private client: any; // PayMongo client - type will be determined by actual SDK
+  private secretKey: string;
   private isTestMode: boolean;
+  private baseUrl: string;
 
   constructor() {
     const secretKey = process.env['PAYMONGO_SECRET_KEY'];
     const isTestMode = process.env['PAYMONGO_TEST_MODE'] === 'true';
+    const useMockMode = process.env['PAYMONGO_MOCK_MODE'] === 'true';
 
-    if (!secretKey) {
-      throw new Error('PayMongo secret key is required. Set PAYMONGO_SECRET_KEY environment variable.');
+    // Only require secret key if NOT in mock mode
+    if (!secretKey && !useMockMode) {
+      throw new Error('PayMongo secret key is required. Set PAYMONGO_SECRET_KEY environment variable or enable PAYMONGO_MOCK_MODE=true for testing.');
     }
 
+    this.secretKey = secretKey || 'mock_key';
     this.isTestMode = isTestMode;
-    
-    // Initialize PayMongo client - adjust based on actual SDK
-    // this.client = new PayMongo(secretKey);
-    // this.client = null; // Placeholder until actual SDK is configured
+    // Use test API for both test and live modes (PayMongo uses same endpoint)
+    this.baseUrl = 'https://api.paymongo.com/v1';
 
-    logger.info(`PayMongo service initialized in ${isTestMode ? 'TEST' : 'LIVE'} mode`);
+    logger.info(`PayMongo service initialized in ${useMockMode ? 'MOCK' : (isTestMode ? 'TEST' : 'LIVE')} mode`, {
+      hasSecretKey: !!secretKey,
+      secretKeyPrefix: secretKey ? secretKey.substring(0, 10) + '...' : 'none',
+      baseUrl: this.baseUrl,
+      useMockMode,
+      isTestMode
+    });
+  }
+
+  private async makeRequest(endpoint: string, method: string = 'GET', data?: any): Promise<any> {
+    // Only use mock mode if explicitly enabled
+    const useMockMode = process.env['PAYMONGO_MOCK_MODE'] === 'true';
+    
+    if (useMockMode) {
+      logger.info('Using MOCK mode for PayMongo API request');
+      return this.mockRequest(endpoint, method, data);
+    }
+
+    // Use real PayMongo API by default
+    logger.info('Using REAL PayMongo API request');
+
+    const url = `${this.baseUrl}${endpoint}`;
+    const headers = {
+      'Authorization': `Basic ${Buffer.from(this.secretKey + ':').toString('base64')}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    };
+
+    const options: any = {
+      method,
+      headers
+    };
+
+    if (data && (method === 'POST' || method === 'PUT')) {
+      options.body = JSON.stringify(data);
+    }
+
+    try {
+      logger.info('Making PayMongo API request:', { url, method, hasData: !!data });
+      
+      const response = await fetch(url, options);
+      const result: any = await response.json();
+
+      logger.info('PayMongo API response:', { 
+        status: response.status, 
+        statusText: response.statusText,
+        hasResult: !!result,
+        resultKeys: result ? Object.keys(result) : []
+      });
+
+      if (!response.ok) {
+        logger.error('PayMongo API error response:', { 
+          status: response.status,
+          statusText: response.statusText,
+          result: result
+        });
+        throw new Error(`PayMongo API error: ${result.error?.message || result.message || `HTTP ${response.status}: ${response.statusText}`}`);
+      }
+
+      return result;
+    } catch (error: any) {
+      logger.error('PayMongo API request failed:', { 
+        error: error?.message || 'Unknown error',
+        url,
+        method,
+        hasData: !!data
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Mock request handler for testing purposes
+   * Only used when PAYMONGO_MOCK_MODE=true is explicitly set
+   * @param endpoint - API endpoint
+   * @param method - HTTP method
+   * @param data - Request data
+   * @returns Mock response data
+   */
+  private async mockRequest(endpoint: string, method: string, data?: any): Promise<any> {
+    logger.info('Using MOCK PayMongo response for testing', { endpoint, method });
+    
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    if (endpoint === '/payment_intents' && method === 'POST') {
+      const paymentIntentId = `pi_mock_${Date.now()}`;
+      return {
+        data: {
+          id: paymentIntentId,
+          type: 'payment_intent',
+          attributes: {
+            amount: data?.data?.attributes?.amount || 10000,
+            currency: data?.data?.attributes?.currency || 'PHP',
+            description: data?.data?.attributes?.description || 'Mock Payment',
+            status: 'awaiting_payment_method',
+            payment_method_allowed: ['qrph'],
+            metadata: data?.data?.attributes?.metadata || {},
+            created_at: Math.floor(Date.now() / 1000),
+            updated_at: Math.floor(Date.now() / 1000)
+          }
+        }
+      };
+    }
+    
+    if (endpoint.includes('/payment_intents/') && endpoint.includes('/attach') && method === 'POST') {
+      const paymentIntentId = endpoint.split('/')[2];
+      return {
+        data: {
+          id: paymentIntentId,
+          type: 'payment_intent',
+          attributes: {
+            amount: 10000,
+            currency: 'PHP',
+            status: 'awaiting_payment_method',
+            payment_method_allowed: ['qrph'],
+            next_action: {
+              type: 'consume_qr',
+              code: {
+                id: `code_mock_${Date.now()}`,
+                amount: 10000,
+                label: 'Mock QR Ph Payment',
+                // WARNING: This is a 1x1 pixel placeholder - not a real QR code
+                image_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+              }
+            },
+            created_at: Math.floor(Date.now() / 1000),
+            updated_at: Math.floor(Date.now() / 1000)
+          }
+        }
+      };
+    }
+    
+    if (endpoint.includes('/payment_intents/') && method === 'GET') {
+      const paymentIntentId = endpoint.split('/')[2];
+      return {
+        data: {
+          id: paymentIntentId,
+          type: 'payment_intent',
+          attributes: {
+            amount: 10000,
+            currency: 'PHP',
+            status: 'awaiting_payment_method',
+            payment_method_allowed: ['qrph'],
+            created_at: Math.floor(Date.now() / 1000),
+            updated_at: Math.floor(Date.now() / 1000)
+          }
+        }
+      };
+    }
+    
+    return { data: { id: 'mock_response', type: 'mock' } };
   }
 
   /**
@@ -105,25 +256,38 @@ export class PayMongoService {
         };
       }
 
-      // Create payment intent via PayMongo API
-      // TODO: Replace with actual PayMongo SDK call
-      const paymentIntent = {
-        id: 'pi_test_' + Date.now(),
-        status: 'awaiting_payment_method',
-        amount: paymentData.amount,
-        currency: paymentData.currency || 'PHP'
+      // Create payment intent via PayMongo API with QR Ph support
+      const requestData = {
+        data: {
+          attributes: {
+            amount: paymentData.amount,
+            currency: paymentData.currency || 'PHP',
+            description: paymentData.description,
+            metadata: paymentData.metadata,
+            payment_method_allowed: ['qrph'] // Enable QR Ph payment method
+          }
+        }
       };
-      
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 100));
+
+      logger.info('Creating payment intent with data:', {
+        amount: paymentData.amount,
+        currency: paymentData.currency || 'PHP',
+        description: paymentData.description,
+        hasMetadata: !!paymentData.metadata,
+        paymentMethodAllowed: ['qrph']
+      });
+
+      const paymentIntentResponse: any = await this.makeRequest('/payment_intents', 'POST', requestData);
+
+      const paymentIntent = paymentIntentResponse.data;
 
       logger.info('Payment intent created:', { 
         id: paymentIntent.id, 
-        status: paymentIntent.status 
+        status: paymentIntent.attributes.status 
       });
 
-      // Create QR Ph payment method
-      const qrResult = await this.createQRPaymentMethod(paymentIntent.id);
+      // Create and attach QR Ph payment method
+      const qrResult = await this.createQRPhPaymentMethod(paymentIntent.id);
       
       if (!qrResult.success) {
         return qrResult;
@@ -133,7 +297,7 @@ export class PayMongoService {
         success: true,
         data: {
           paymentIntentId: paymentIntent.id,
-          status: paymentIntent.status,
+          status: paymentIntent.attributes.status,
           amount: paymentData.amount,
           currency: paymentData.currency || 'PHP',
           expiresAt: this.calculateExpirationTime()
@@ -163,97 +327,196 @@ export class PayMongoService {
    * @param paymentIntentId - The payment intent ID
    * @returns QR code data for display
    */
-  private async createQRPaymentMethod(paymentIntentId: string): Promise<PaymentResult> {
+  private async createQRPhPaymentMethod(paymentIntentId: string): Promise<PaymentResult> {
     try {
       logger.info('Creating QR Ph payment method for intent:', paymentIntentId);
 
       // Create QR Ph payment method
-      // TODO: Replace with actual PayMongo SDK call
-      const paymentMethod = {
-        id: 'pm_test_' + Date.now(),
-        type: 'qrph'
-      };
+      const paymentMethodResponse: any = await this.makeRequest('/payment_methods', 'POST', {
+        data: {
+          attributes: {
+            type: 'qrph'
+          }
+        }
+      });
 
+      const paymentMethod = paymentMethodResponse.data;
       logger.info('QR Ph payment method created:', { id: paymentMethod.id });
 
       // Attach payment method to payment intent
-      // TODO: Replace with actual PayMongo SDK call
-      const attachedPayment = {
-        id: paymentIntentId,
-        status: 'awaiting_payment_method',
-        amount: 10000, // Placeholder
-        currency: 'PHP',
-        payment_method: paymentMethod
-      };
-      
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 100));
+      const attachResponse: any = await this.makeRequest(`/payment_intents/${paymentIntentId}/attach`, 'POST', {
+        data: {
+          attributes: {
+            payment_method: paymentMethod.id
+          }
+        }
+      });
 
+      const attachedPayment = attachResponse.data;
       logger.info('Payment method attached to intent:', { 
         intentId: paymentIntentId, 
         methodId: paymentMethod.id,
-        status: attachedPayment.status 
+        status: attachedPayment.attributes.status 
       });
 
-      // Extract QR code data from the payment method
-      const qrCodeData = this.extractQRCodeData(attachedPayment);
+      // Extract QR code data from the next_action (PayMongo QR Ph approach)
+      const qrCodeData = this.extractQRPhCodeData(attachedPayment);
+
+      // Validate that we have QR code data for QR Ph payments
+      if (!qrCodeData.url && !qrCodeData.data) {
+        logger.error('Failed to extract QR code data from PayMongo response', {
+          paymentIntentId,
+          attachedPayment: {
+            id: attachedPayment.id,
+            hasAttributes: !!attachedPayment.attributes,
+            hasNextAction: !!attachedPayment.attributes?.next_action,
+            nextActionType: attachedPayment.attributes?.next_action?.type
+          }
+        });
+        
+        return {
+          success: false,
+          error: 'Failed to generate QR code for payment. Please try again or contact support.'
+        };
+      }
 
       const result: PaymentResult = {
         success: true,
         data: {
           paymentIntentId,
-          status: attachedPayment.status,
-          amount: attachedPayment.amount,
-          currency: attachedPayment.currency
+          status: attachedPayment.attributes.status,
+          amount: attachedPayment.attributes.amount,
+          currency: attachedPayment.attributes.currency
         }
       };
 
       if (qrCodeData.url) {
         result.data!.qrCodeUrl = qrCodeData.url;
+        logger.info('QR code URL successfully extracted', {
+          paymentIntentId,
+          urlLength: qrCodeData.url.length
+        });
       }
       if (qrCodeData.data) {
         result.data!.qrCodeData = qrCodeData.data;
+        logger.info('QR code data successfully extracted', {
+          paymentIntentId,
+          dataLength: qrCodeData.data.length
+        });
       }
 
       return result;
 
     } catch (error: any) {
-      logger.error('Error creating QR payment method:', error);
+      logger.error('Error creating QR Ph payment method:', error);
       return {
         success: false,
-        error: error.message || 'Failed to create QR payment method'
+        error: error.message || 'Failed to create QR Ph payment method'
       };
     }
   }
 
   /**
-   * Extract QR code data from payment method response
-   * @param paymentResponse - PayMongo payment response
+   * Extract QR Ph code data from PayMongo attach response
+   * Based on official PayMongo documentation: next_action.code.image_url
+   * @param attachResponse - PayMongo attach response
    * @returns QR code URL and data
    */
-  private extractQRCodeData(paymentResponse: any): { url?: string; data?: string } {
+  private extractQRPhCodeData(attachResponse: any): { url?: string; data?: string } {
     try {
-      // For mock/testing purposes, generate QR code data
-      const paymentIntentId = paymentResponse.id;
+      const attributes = attachResponse.attributes;
       
-      // Generate QR code URL using a QR code service
-      const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${paymentIntentId}`;
-      
-      // Generate mock base64 QR code data
-      const qrCodeData = `base64_encoded_qr_data_for_${paymentIntentId}`;
-      
-      logger.info('Generated QR code data:', { 
-        paymentIntentId, 
-        qrCodeUrl,
-        hasQrCodeData: !!qrCodeData 
+      // Check for next_action with QR Ph code (PayMongo official approach)
+      if (attributes.next_action && attributes.next_action.type === 'consume_qr') {
+        const code = attributes.next_action.code;
+        
+        if (code && code.image_url) {
+          // PayMongo provides base64 image data
+          const qrCodeData = code.image_url; // This is the base64 image string
+          
+          // Validate QR code data - ensure it's not the mock placeholder
+          const isMockPlaceholder = qrCodeData === 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+          
+          if (isMockPlaceholder) {
+            logger.warn('Detected mock QR code placeholder - this indicates mock mode is active');
+          }
+          
+          // Ensure proper base64 format
+          const qrCodeUrl = qrCodeData.startsWith('data:image/png;base64,') 
+            ? qrCodeData 
+            : `data:image/png;base64,${qrCodeData}`;
+          
+          logger.info('Extracted QR Ph code from PayMongo next_action:', { 
+            paymentIntentId: attachResponse.id,
+            codeId: code.id,
+            amount: code.amount,
+            label: code.label,
+            hasImageUrl: !!code.image_url,
+            imageUrlLength: code.image_url ? code.image_url.length : 0,
+            isMockPlaceholder,
+            isValidQRCode: !isMockPlaceholder && code.image_url.length > 100
+          });
+
+          // Validate QR code quality
+          if (!isMockPlaceholder && code.image_url.length < 100) {
+            logger.warn('QR code data seems too short - may be invalid', {
+              length: code.image_url.length,
+              paymentIntentId: attachResponse.id
+            });
+          }
+
+          return {
+            url: qrCodeUrl,
+            data: qrCodeData
+          };
+        } else {
+          logger.warn('QR Ph code missing image_url in next_action.code', {
+            paymentIntentId: attachResponse.id,
+            hasCode: !!code,
+            hasImageUrl: !!(code && code.image_url)
+          });
+        }
+      }
+
+      // Fallback: check for legacy QR code data
+      const paymentMethod = attachResponse.payment_method;
+      if (paymentMethod && paymentMethod.attributes) {
+        const methodAttributes = paymentMethod.attributes;
+        const qrCodeUrl = methodAttributes.qr_code_url || methodAttributes.qr_code;
+        const qrCodeData = methodAttributes.qr_code_data || methodAttributes.qr_code;
+        
+        if (qrCodeUrl || qrCodeData) {
+          logger.info('Extracted QR code from legacy payment method:', { 
+            paymentIntentId: attachResponse.id,
+            hasQrCodeUrl: !!qrCodeUrl,
+            hasQrCodeData: !!qrCodeData
+          });
+
+          return {
+            url: qrCodeUrl,
+            data: qrCodeData
+          };
+        }
+      }
+
+      // No QR code data found - this is a critical error for QR Ph payments
+      logger.error('No QR code data found in PayMongo response - QR Ph payment cannot proceed:', {
+        paymentIntentId: attachResponse.id,
+        hasNextAction: !!attributes.next_action,
+        nextActionType: attributes.next_action?.type,
+        hasCode: !!attributes.next_action?.code,
+        hasImageUrl: !!(attributes.next_action?.code?.image_url),
+        hasPaymentMethod: !!paymentMethod,
+        responseStructure: {
+          hasAttributes: !!attributes,
+          hasNextAction: !!attributes.next_action,
+          nextActionKeys: attributes.next_action ? Object.keys(attributes.next_action) : []
+        }
       });
 
-      return {
-        url: qrCodeUrl,
-        data: qrCodeData
-      };
+      return {};
     } catch (error) {
-      logger.error('Error extracting QR code data:', error);
+      logger.error('Error extracting QR Ph code data:', error);
       return {};
     }
   }
@@ -267,24 +530,17 @@ export class PayMongoService {
     try {
       logger.info('Retrieving payment status for intent:', paymentIntentId);
 
-      // TODO: Replace with actual PayMongo SDK call
-      const paymentIntent = {
-        id: paymentIntentId,
-        status: 'awaiting_payment_method',
-        amount: 10000, // Placeholder
-        currency: 'PHP'
-      };
-      
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Retrieve payment intent from PayMongo
+      const response: any = await this.makeRequest(`/payment_intents/${paymentIntentId}`);
+      const paymentIntent = response.data;
 
       return {
         success: true,
         data: {
           paymentIntentId: paymentIntent.id,
-          status: paymentIntent.status,
-          amount: paymentIntent.amount,
-          currency: paymentIntent.currency
+          status: paymentIntent.attributes.status,
+          amount: paymentIntent.attributes.amount,
+          currency: paymentIntent.attributes.currency
         }
       };
 
@@ -293,45 +549,6 @@ export class PayMongoService {
       return {
         success: false,
         error: error.message || 'Failed to retrieve payment status'
-      };
-    }
-  }
-
-  /**
-   * Simulate a payment cancellation
-   * @param paymentIntentId - The ID of the payment intent to cancel
-   * @returns Payment result with cancelled status
-   */
-  async cancelPaymentIntent(paymentIntentId: string): Promise<PaymentResult> {
-    try {
-      logger.info('Cancelling payment intent:', paymentIntentId);
-
-      // TODO: Replace with actual PayMongo SDK call
-      const cancelledIntent = {
-        id: paymentIntentId,
-        status: 'cancelled',
-        amount: 10000, // Placeholder
-        currency: 'PHP'
-      };
-
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      return {
-        success: true,
-        data: {
-          paymentIntentId: cancelledIntent.id,
-          status: cancelledIntent.status,
-          amount: cancelledIntent.amount,
-          currency: cancelledIntent.currency
-        }
-      };
-
-    } catch (error: any) {
-      logger.error('Error cancelling payment intent:', error);
-      return {
-        success: false,
-        error: error.message || 'Failed to cancel payment intent'
       };
     }
   }
@@ -353,16 +570,20 @@ export class PayMongoService {
       const { attributes } = data;
 
       switch (type) {
-        case 'payment_intent.succeeded':
+        case 'payment.paid':
           await this.handlePaymentSuccess(data.id, attributes);
           break;
         
-        case 'payment_intent.payment_failed':
+        case 'payment.failed':
           await this.handlePaymentFailure(data.id, attributes);
           break;
         
         case 'payment_intent.cancelled':
           await this.handlePaymentCancellation(data.id, attributes);
+          break;
+        
+        case 'qrph.expired':
+          await this.handleQRPhExpired(data.id, attributes);
           break;
         
         default:
@@ -430,12 +651,28 @@ export class PayMongoService {
   }
 
   /**
-   * Calculate QR code expiration time (15 minutes from now)
+   * Handle expired QR Ph code
+   * @param paymentIntentId - Payment intent ID
+   * @param attributes - Payment attributes
+   */
+  private async handleQRPhExpired(paymentIntentId: string, attributes: any): Promise<void> {
+    logger.info('QR Ph code expired:', { 
+      paymentIntentId, 
+      amount: attributes.amount,
+      currency: attributes.currency 
+    });
+
+    // Update order status in database - QR code expired, revert to awaiting payment
+    // await this.updateOrderPaymentStatus(paymentIntentId, 'awaiting_payment_method');
+  }
+
+  /**
+   * Calculate QR code expiration time (30 minutes from now - PayMongo standard)
    * @returns ISO string of expiration time
    */
   private calculateExpirationTime(): string {
     const expirationTime = new Date();
-    expirationTime.setMinutes(expirationTime.getMinutes() + 15); // 15 minutes
+    expirationTime.setMinutes(expirationTime.getMinutes() + 30); // 30 minutes (PayMongo standard)
     return expirationTime.toISOString();
   }
 
@@ -470,6 +707,32 @@ export class PayMongoService {
    */
   isInTestMode(): boolean {
     return this.isTestMode;
+  }
+
+  /**
+   * Check if service is in mock mode
+   * @returns Whether service is using mock responses
+   */
+  isInMockMode(): boolean {
+    return process.env['PAYMONGO_MOCK_MODE'] === 'true';
+  }
+
+  /**
+   * Get service configuration status
+   * @returns Service configuration information
+   */
+  getServiceStatus(): { 
+    isTestMode: boolean; 
+    isMockMode: boolean; 
+    hasSecretKey: boolean; 
+    baseUrl: string; 
+  } {
+    return {
+      isTestMode: this.isTestMode,
+      isMockMode: this.isInMockMode(),
+      hasSecretKey: !!this.secretKey && this.secretKey !== 'mock_key',
+      baseUrl: this.baseUrl
+    };
   }
 }
 

@@ -17,6 +17,7 @@ import customerRoutes from './routes/customerRoutes';
 import employeeRoutes from './routes/employeeRoutes';
 import syncRoutes from './routes/syncRoutes';
 import networkRoutes from './routes/networkRoutes';
+import paymentRoutes from './routes/paymentRoutes';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler';
@@ -107,6 +108,11 @@ app.use('/api/customers', authMiddleware, customerRoutes);
 app.use('/api/employees', authMiddleware, employeeRoutes);
 app.use('/api/sync', authMiddleware, syncRoutes);
 app.use('/api/network', authMiddleware, networkRoutes);
+// Payment routes - webhook needs to be unauthenticated, others need auth
+// Register webhook route first (unauthenticated)
+app.use('/api/payments/webhook', paymentRoutes);
+// Register other payment routes with authentication
+app.use('/api/payments', authMiddleware, paymentRoutes);
 
 // WebSocket setup
 setupWebSocket(io);

@@ -198,6 +198,14 @@ router.post('/', cashierOrAdmin, async (req: Request, res: Response) => {
       });
     }
 
+    // Validate user authentication
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({
+        success: false,
+        error: 'User authentication required'
+      });
+    }
+
     const orderData = {
       customer_name,
       customer_phone,
@@ -207,6 +215,11 @@ router.post('/', cashierOrAdmin, async (req: Request, res: Response) => {
       estimated_prep_time,
       created_by: req.user.id
     };
+
+    logger.info('Creating order with data:', { 
+      orderData: { ...orderData, created_by: req.user.id },
+      user: { id: req.user.id, username: req.user.username }
+    });
 
     const result = await supabaseService().createOrder(orderData);
 
@@ -451,21 +464,21 @@ router.put('/:orderId/payment', cashierOrAdmin, async (req: Request, res: Respon
     }
 
     // Validate payment status
-    const validPaymentStatuses = ['unpaid', 'paid', 'refunded'];
+    const validPaymentStatuses = ['unpaid', 'paid', 'refunded', 'pending', 'failed', 'cancelled'];
     if (!validPaymentStatuses.includes(payment_status)) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid payment status. Must be one of: unpaid, paid, refunded'
+        error: 'Invalid payment status. Must be one of: unpaid, paid, refunded, pending, failed, cancelled'
       });
     }
 
     // Validate payment method if provided
     if (payment_method) {
-      const validPaymentMethods = ['cash', 'gcash', 'card'];
+      const validPaymentMethods = ['cash', 'gcash', 'card', 'paymongo', 'qrph'];
       if (!validPaymentMethods.includes(payment_method)) {
         return res.status(400).json({
           success: false,
-          error: 'Invalid payment method. Must be one of: cash, gcash, card'
+          error: 'Invalid payment method. Must be one of: cash, gcash, card, paymongo, qrph'
         });
       }
     }
@@ -490,6 +503,105 @@ router.put('/:orderId/payment', cashierOrAdmin, async (req: Request, res: Respon
     return res.status(500).json({
       success: false,
       error: 'Failed to update payment status'
+    });
+  }
+});
+
+// Create PayMongo payment for order (Cashier/Admin)
+router.post('/:orderId/paymongo-payment', cashierOrAdmin, async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+    const { description, metadata } = req.body;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order ID is required'
+      });
+    }
+
+    // Get order details
+    const orderResult = await supabaseService().getOrderById(orderId);
+    if (!orderResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    const order = orderResult.data;
+
+    // Check if order is already paid
+    if (order.payment_status === 'paid') {
+      return res.status(400).json({
+        success: false,
+        error: 'Order is already paid'
+      });
+    }
+
+    // Import paymongoService dynamically to avoid circular dependencies
+    const { paymongoService } = await import('../services/paymongoService');
+
+    // Calculate amount in centavos (convert from peso to centavos)
+    const amountInCentavos = Math.round(order.total_amount * 100);
+
+    // Prepare payment data
+    const paymentData = {
+      amount: amountInCentavos,
+      currency: 'PHP',
+      description: description || `Payment for Order #${order.order_number}`,
+      metadata: {
+        ...metadata,
+        orderId: order.id,
+        orderNumber: order.order_number,
+        customerName: order.customer_name,
+        orderType: order.order_type,
+        createdBy: req.user.id,
+        createdByUsername: req.user.username,
+        timestamp: new Date().toISOString()
+      }
+    };
+
+    logger.info('Creating PayMongo payment for order:', { 
+      orderId, 
+      orderNumber: order.order_number,
+      amount: amountInCentavos,
+      createdBy: req.user.username 
+    });
+
+    // Create payment intent
+    const result = await paymongoService().createPaymentIntent(paymentData);
+
+    if (!result.success) {
+      logger.error('Failed to create PayMongo payment for order:', result.error);
+      return res.status(500).json({
+        success: false,
+        error: result.error || 'Failed to create payment intent'
+      });
+    }
+
+    // Update order payment method to 'paymongo' and status to 'pending'
+    await supabaseService().updateOrderPayment(orderId, 'pending', 'paymongo', req.user.id);
+
+    return res.status(201).json({
+      success: true,
+      message: 'PayMongo payment intent created for order',
+      data: {
+        ...result.data,
+        order: {
+          id: order.id,
+          orderNumber: order.order_number,
+          totalAmount: order.total_amount,
+          customerName: order.customer_name
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Create PayMongo order payment error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to create PayMongo order payment'
     });
   }
 });
@@ -712,7 +824,9 @@ router.delete('/:orderId', adminOnly, async (req: Request, res: Response) => {
 
     logger.info(`Admin ${req.user.id} deleting order ${orderId} (status: ${order.status}, payment: ${order.payment_status})`);
 
-    const result = await supabaseService().deleteOrder(orderId, force === 'true');
+    // Use hard delete by default for unpaid/cancelled orders
+    const shouldForceDelete = force === 'true' || (order.payment_status === 'unpaid' && order.status === 'cancelled');
+    const result = await supabaseService().deleteOrder(orderId, shouldForceDelete);
 
     if (!result.success) {
       return res.status(500).json({
