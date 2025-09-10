@@ -1739,6 +1739,9 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
 
+      // Filter out cancelled orders by default (soft delete)
+      query = query.neq('status', 'cancelled');
+
       if (status) {
         query = query.eq('status', status);
       }
@@ -1827,6 +1830,8 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
 
   async createOrder(orderData: any): Promise<ApiResponse<any>> {
     try {
+      logger.info('Creating order in database:', { orderData });
+
       const insertData: Record<string, any> = {
         customer_name: orderData.customer_name,
         customer_phone: orderData.customer_phone,
@@ -1837,6 +1842,8 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
         created_by: orderData.created_by
       };
 
+      logger.info('Insert data prepared:', { insertData });
+
       const { data, error } = await this.client
         .from('orders')
         .insert(insertData)
@@ -1844,12 +1851,19 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
         .single();
 
       if (error) {
+        logger.error('Database error creating order:', { 
+          error: error.message, 
+          details: error.details, 
+          hint: error.hint,
+          code: error.code 
+        });
         return {
           success: false,
           error: `Failed to create order: ${error.message}`
         };
       }
 
+      logger.info('Order created successfully:', { orderId: data?.id });
       return {
         success: true,
         data
