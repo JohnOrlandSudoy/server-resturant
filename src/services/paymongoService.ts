@@ -38,6 +38,11 @@ export interface PaymentResult {
     amount: number;
     currency: string;
     expiresAt?: string;
+    description?: string;
+    metadata?: Record<string, any>;
+    created_at?: number;
+    updated_at?: number;
+    cancelled_at?: string;
   };
   error?: string;
 }
@@ -57,6 +62,13 @@ export interface WebhookEvent {
       metadata?: Record<string, any>;
       created_at: number;
       updated_at: number;
+      // Additional PayMongo webhook attributes
+      fee?: number;
+      net_amount?: number;
+      external_reference_number?: string;
+      failed_message?: string;
+      failed_code?: string;
+      [key: string]: any; // Allow additional properties
     };
   };
 }
@@ -224,6 +236,24 @@ export class PayMongoService {
             amount: 10000,
             currency: 'PHP',
             status: 'awaiting_payment_method',
+            payment_method_allowed: ['qrph'],
+            created_at: Math.floor(Date.now() / 1000),
+            updated_at: Math.floor(Date.now() / 1000)
+          }
+        }
+      };
+    }
+    
+    if (endpoint.includes('/payment_intents/') && endpoint.includes('/cancel') && method === 'POST') {
+      const paymentIntentId = endpoint.split('/')[2];
+      return {
+        data: {
+          id: paymentIntentId,
+          type: 'payment_intent',
+          attributes: {
+            amount: 10000,
+            currency: 'PHP',
+            status: 'cancelled',
             payment_method_allowed: ['qrph'],
             created_at: Math.floor(Date.now() / 1000),
             updated_at: Math.floor(Date.now() / 1000)
@@ -534,13 +564,24 @@ export class PayMongoService {
       const response: any = await this.makeRequest(`/payment_intents/${paymentIntentId}`);
       const paymentIntent = response.data;
 
+      logger.info('Payment intent retrieved:', {
+        id: paymentIntent.id,
+        status: paymentIntent.attributes.status,
+        amount: paymentIntent.attributes.amount,
+        currency: paymentIntent.attributes.currency
+      });
+
       return {
         success: true,
         data: {
           paymentIntentId: paymentIntent.id,
           status: paymentIntent.attributes.status,
           amount: paymentIntent.attributes.amount,
-          currency: paymentIntent.attributes.currency
+          currency: paymentIntent.attributes.currency,
+          description: paymentIntent.attributes.description,
+          metadata: paymentIntent.attributes.metadata,
+          created_at: paymentIntent.attributes.created_at,
+          updated_at: paymentIntent.attributes.updated_at
         }
       };
 
@@ -549,6 +590,45 @@ export class PayMongoService {
       return {
         success: false,
         error: error.message || 'Failed to retrieve payment status'
+      };
+    }
+  }
+
+  /**
+   * Cancel a payment intent
+   * @param paymentIntentId - The payment intent ID to cancel
+   * @returns Cancellation result
+   */
+  async cancelPaymentIntent(paymentIntentId: string): Promise<PaymentResult> {
+    try {
+      logger.info('Cancelling payment intent:', paymentIntentId);
+
+      // Cancel payment intent via PayMongo API
+      const response: any = await this.makeRequest(`/payment_intents/${paymentIntentId}/cancel`, 'POST');
+
+      const paymentIntent = response.data;
+
+      logger.info('Payment intent cancelled:', {
+        id: paymentIntent.id,
+        status: paymentIntent.attributes.status
+      });
+
+      return {
+        success: true,
+        data: {
+          paymentIntentId: paymentIntent.id,
+          status: paymentIntent.attributes.status,
+          amount: paymentIntent.attributes.amount,
+          currency: paymentIntent.attributes.currency,
+          cancelled_at: new Date().toISOString()
+        }
+      };
+
+    } catch (error: any) {
+      logger.error('Error cancelling payment intent:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to cancel payment intent'
       };
     }
   }
@@ -576,6 +656,14 @@ export class PayMongoService {
         
         case 'payment.failed':
           await this.handlePaymentFailure(data.id, attributes);
+          break;
+        
+        case 'payment_intent.succeeded':
+          await this.handlePaymentIntentSucceeded(data.id, attributes);
+          break;
+        
+        case 'payment_intent.payment_failed':
+          await this.handlePaymentIntentFailed(data.id, attributes);
           break;
         
         case 'payment_intent.cancelled':
@@ -616,6 +704,41 @@ export class PayMongoService {
     // Update order status in database
     // This will be implemented in the order service
     // await this.updateOrderPaymentStatus(paymentIntentId, 'paid');
+  }
+
+  /**
+   * Handle payment intent succeeded
+   * @param paymentIntentId - Payment intent ID
+   * @param attributes - Payment intent attributes
+   */
+  private async handlePaymentIntentSucceeded(paymentIntentId: string, attributes: any): Promise<void> {
+    logger.info('Payment intent succeeded:', { 
+      paymentIntentId, 
+      amount: attributes.amount,
+      currency: attributes.currency 
+    });
+
+    // Update order status in database
+    // This will be implemented in the order service
+    // await this.updateOrderPaymentStatus(paymentIntentId, 'paid');
+  }
+
+  /**
+   * Handle payment intent failed
+   * @param paymentIntentId - Payment intent ID
+   * @param attributes - Payment intent attributes
+   */
+  private async handlePaymentIntentFailed(paymentIntentId: string, attributes: any): Promise<void> {
+    logger.info('Payment intent failed:', { 
+      paymentIntentId, 
+      amount: attributes.amount,
+      currency: attributes.currency,
+      failedCode: attributes.failed_code,
+      failedMessage: attributes.failed_message
+    });
+
+    // Update order status in database
+    // await this.updateOrderPaymentStatus(paymentIntentId, 'failed');
   }
 
   /**

@@ -1981,6 +1981,167 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
     }
   }
 
+  // Payment tracking methods
+  async createPaymentRecord(paymentData: {
+    payment_intent_id: string;
+    order_id?: string | undefined;
+    order_number?: string | undefined;
+    amount: number;
+    currency: string;
+    description?: string | undefined;
+    status: string;
+    payment_status: string;
+    payment_method?: string | undefined;
+    payment_source_type?: string | undefined;
+    qr_code_url?: string | undefined;
+    qr_code_data?: string | undefined;
+    qr_code_expires_at?: string | undefined;
+    paymongo_response?: any;
+    metadata?: any;
+    created_by: string;
+  }): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('payments')
+        .insert(paymentData)
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Create payment record error:', error);
+        return {
+          success: false,
+          error: 'Failed to create payment record'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Create payment record error:', error);
+      return {
+        success: false,
+        error: 'Failed to create payment record'
+      };
+    }
+  }
+
+  async updatePaymentRecord(paymentIntentId: string, updateData: {
+    status?: string | undefined;
+    payment_status?: string | undefined;
+    payment_id?: string | undefined;
+    paid_at?: string | undefined;
+    failed_at?: string | undefined;
+    cancelled_at?: string | undefined;
+    error_message?: string | undefined;
+    error_code?: string | undefined;
+    fee_amount?: number | undefined;
+    net_amount?: number | undefined;
+    external_reference_number?: string | undefined;
+    paymongo_response?: any;
+    webhook_events?: any[] | undefined;
+    updated_by?: string | undefined;
+  }): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('payments')
+        .update({
+          ...updateData,
+          updated_at: new Date().toISOString()
+        })
+        .eq('payment_intent_id', paymentIntentId)
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Update payment record error:', error);
+        return {
+          success: false,
+          error: 'Failed to update payment record'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Update payment record error:', error);
+      return {
+        success: false,
+        error: 'Failed to update payment record'
+      };
+    }
+  }
+
+  async getPaymentHistory(orderId: string): Promise<ApiResponse<any[]>> {
+    try {
+      const { data, error } = await this.client
+        .from('payments')
+        .select(`
+          *,
+          created_by_user:user_profiles!payments_created_by_fkey(username, full_name),
+          updated_by_user:user_profiles!payments_updated_by_fkey(username, full_name)
+        `)
+        .eq('order_id', orderId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        logger.error('Get payment history error:', error);
+        return {
+          success: false,
+          error: 'Failed to retrieve payment history'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get payment history error:', error);
+      return {
+        success: false,
+        error: 'Failed to retrieve payment history'
+      };
+    }
+  }
+
+  async getPaymentByIntentId(paymentIntentId: string): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('payments')
+        .select(`
+          *,
+          created_by_user:user_profiles!payments_created_by_fkey(username, full_name),
+          updated_by_user:user_profiles!payments_updated_by_fkey(username, full_name)
+        `)
+        .eq('payment_intent_id', paymentIntentId)
+        .single();
+
+      if (error) {
+        logger.error('Get payment by intent ID error:', error);
+        return {
+          success: false,
+          error: 'Failed to retrieve payment record'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Get payment by intent ID error:', error);
+      return {
+        success: false,
+        error: 'Failed to retrieve payment record'
+      };
+    }
+  }
+
   // Order items
   async getOrderItems(orderId: string): Promise<ApiResponse<any[]>> {
     try {
@@ -2117,24 +2278,188 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
     }
   }
 
-  // Kitchen orders
+  // Kitchen orders with complete item and ingredient details
   async getKitchenOrders(): Promise<ApiResponse<any[]>> {
     try {
       const { data, error } = await this.client
-        .from('kitchen_orders')
-        .select('*')
+        .from('orders')
+        .select(`
+          id,
+          order_number,
+          customer_name,
+          customer_phone,
+          order_type,
+          status,
+          payment_status,
+          payment_method,
+          subtotal,
+          discount_amount,
+          tax_amount,
+          total_amount,
+          special_instructions,
+          table_number,
+          estimated_prep_time,
+          actual_prep_time,
+          created_at,
+          updated_at,
+          completed_at,
+          order_items (
+            id,
+            menu_item_id,
+            quantity,
+            unit_price,
+            total_price,
+            customizations,
+            special_instructions,
+            created_at,
+            menu_items (
+              id,
+              name,
+              description,
+              price,
+              prep_time,
+              is_available,
+              calories,
+              allergens,
+              menu_item_ingredients (
+                id,
+                quantity_required,
+                unit,
+                is_optional,
+                ingredients (
+                  id,
+                  name,
+                  description,
+                  unit,
+                  current_stock,
+                  min_stock_threshold,
+                  max_stock_threshold,
+                  cost_per_unit,
+                  supplier,
+                  category,
+                  storage_location,
+                  expiry_date,
+                  is_active
+                )
+              )
+            )
+          )
+        `)
+        .in('status', ['pending', 'preparing', 'ready'])
         .order('created_at', { ascending: true });
 
       if (error) {
+        logger.error('Kitchen orders query error:', error);
         return {
           success: false,
           error: 'Failed to fetch kitchen orders'
         };
       }
 
+      // Process and format the data for kitchen display
+      const processedOrders = (data || []).map(order => {
+        // Calculate total prep time based on menu items
+        let totalPrepTime = 0;
+        let totalItems = 0;
+        let ingredientsNeeded: any[] = [];
+        let lowStockIngredients: any[] = [];
+
+        if (order.order_items && order.order_items.length > 0) {
+          order.order_items.forEach((item: any) => {
+            totalItems += item.quantity;
+            
+            if (item.menu_items) {
+              // Add prep time for each quantity
+              totalPrepTime += (item.menu_items.prep_time || 0) * item.quantity;
+              
+              // Process ingredients for this menu item
+              if (item.menu_items.menu_item_ingredients) {
+                item.menu_items.menu_item_ingredients.forEach((menuIngredient: any) => {
+                  if (menuIngredient.ingredients) {
+                    const ingredient = menuIngredient.ingredients;
+                    const requiredQuantity = (menuIngredient.quantity_required || 0) * item.quantity;
+                    
+                    // Check if ingredient is already in the list
+                    const existingIngredient = ingredientsNeeded.find(ing => ing.id === ingredient.id);
+                    if (existingIngredient) {
+                      existingIngredient.required_quantity += requiredQuantity;
+                    } else {
+                      ingredientsNeeded.push({
+                        id: ingredient.id,
+                        name: ingredient.name,
+                        description: ingredient.description,
+                        unit: ingredient.unit,
+                        required_quantity: requiredQuantity,
+                        current_stock: ingredient.current_stock,
+                        min_stock_threshold: ingredient.min_stock_threshold,
+                        max_stock_threshold: ingredient.max_stock_threshold,
+                        cost_per_unit: ingredient.cost_per_unit,
+                        supplier: ingredient.supplier,
+                        category: ingredient.category,
+                        storage_location: ingredient.storage_location,
+                        expiry_date: ingredient.expiry_date,
+                        is_optional: menuIngredient.is_optional,
+                        is_low_stock: ingredient.current_stock <= ingredient.min_stock_threshold,
+                        is_out_of_stock: ingredient.current_stock <= 0
+                      });
+                    }
+                    
+                    // Check for low stock or out of stock
+                    if (ingredient.current_stock <= ingredient.min_stock_threshold) {
+                      const existingLowStock = lowStockIngredients.find(ing => ing.id === ingredient.id);
+                      if (!existingLowStock) {
+                        lowStockIngredients.push({
+                          id: ingredient.id,
+                          name: ingredient.name,
+                          current_stock: ingredient.current_stock,
+                          min_stock_threshold: ingredient.min_stock_threshold,
+                          required_quantity: requiredQuantity,
+                          is_out_of_stock: ingredient.current_stock <= 0
+                        });
+                      }
+                    }
+                  }
+                });
+              }
+            }
+          });
+        }
+
+        // Determine priority based on order age and prep time
+        const orderAge = Date.now() - new Date(order.created_at).getTime();
+        const ageInMinutes = orderAge / (1000 * 60);
+        let priority = 'LOW';
+        
+        if (ageInMinutes > 30 || totalPrepTime > 20) {
+          priority = 'HIGH';
+        } else if (ageInMinutes > 15 || totalPrepTime > 10) {
+          priority = 'MEDIUM';
+        }
+
+        return {
+          ...order,
+          kitchen_metadata: {
+            total_items: totalItems,
+            estimated_total_prep_time: totalPrepTime,
+            priority: priority,
+            ingredients_needed: ingredientsNeeded,
+            low_stock_ingredients: lowStockIngredients,
+            has_low_stock: lowStockIngredients.length > 0,
+            has_out_of_stock: lowStockIngredients.some(ing => ing.is_out_of_stock),
+            can_prepare: lowStockIngredients.filter(ing => ing.is_out_of_stock).length === 0
+          }
+        };
+      });
+
+      logger.info('Kitchen orders retrieved successfully:', {
+        totalOrders: processedOrders.length,
+        ordersWithItems: processedOrders.filter(o => o.order_items?.length > 0).length,
+        ordersWithLowStock: processedOrders.filter(o => o.kitchen_metadata?.has_low_stock).length
+      });
+
       return {
         success: true,
-        data: data || []
+        data: processedOrders
       };
     } catch (error) {
       logger.error('Get kitchen orders error:', error);

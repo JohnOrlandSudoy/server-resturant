@@ -580,8 +580,43 @@ router.post('/:orderId/paymongo-payment', cashierOrAdmin, async (req: Request, r
       });
     }
 
+    // Store payment record in database for webhook processing
+    if (result.data) {
+      const paymentRecord = await supabaseService().createPaymentRecord({
+        payment_intent_id: result.data.paymentIntentId,
+        order_id: orderId,
+        order_number: order.order_number,
+        amount: result.data.amount,
+        currency: result.data.currency,
+        description: paymentData.description || undefined,
+        status: result.data.status,
+        payment_status: 'pending',
+        payment_method: 'paymongo',
+        payment_source_type: 'qrph',
+        qr_code_url: result.data.qrCodeUrl,
+        qr_code_data: result.data.qrCodeData,
+        qr_code_expires_at: result.data.expiresAt,
+        paymongo_response: result,
+        metadata: paymentData.metadata,
+        created_by: req.user.id
+      });
+
+      if (!paymentRecord.success) {
+        logger.error('Failed to create payment record for order:', paymentRecord.error);
+        // Don't fail the request, just log the error
+      }
+    }
+
     // Update order payment method to 'paymongo' and status to 'pending'
     await supabaseService().updateOrderPayment(orderId, 'pending', 'paymongo', req.user.id);
+
+    logger.info('PayMongo payment intent created for order:', {
+      orderId,
+      orderNumber: order.order_number,
+      paymentIntentId: result.data?.paymentIntentId,
+      amount: amountInCentavos,
+      createdBy: req.user.username
+    });
 
     return res.status(201).json({
       success: true,
@@ -592,7 +627,9 @@ router.post('/:orderId/paymongo-payment', cashierOrAdmin, async (req: Request, r
           id: order.id,
           orderNumber: order.order_number,
           totalAmount: order.total_amount,
-          customerName: order.customer_name
+          customerName: order.customer_name,
+          paymentStatus: 'pending',
+          paymentMethod: 'paymongo'
         }
       }
     });
@@ -1101,6 +1138,376 @@ router.get('/:orderId/history', kitchenOrAdmin, async (req: Request, res: Respon
     return res.status(500).json({
       success: false,
       error: 'Failed to fetch order status history'
+    });
+  }
+});
+
+// Check PayMongo payment status for order (Cashier/Admin)
+router.get('/:orderId/payment-status', cashierOrAdmin, async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order ID is required'
+      });
+    }
+
+    // Get order details
+    const orderResult = await supabaseService().getOrderById(orderId);
+    if (!orderResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    const order = orderResult.data;
+
+    // Get payment history for this order
+    const paymentHistoryResult = await supabaseService().getPaymentHistory(orderId);
+    
+    if (!paymentHistoryResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: paymentHistoryResult.error || 'Failed to retrieve payment history'
+      });
+    }
+
+    const payments = paymentHistoryResult.data || [];
+    const latestPayment = payments.length > 0 ? payments[0] : null;
+
+    // If there's a PayMongo payment, check its status
+    let paymongoStatus = null;
+    if (latestPayment && latestPayment.payment_intent_id) {
+      try {
+        const { paymongoService } = await import('../services/paymongoService');
+        const statusResult = await paymongoService().getPaymentStatus(latestPayment.payment_intent_id);
+        
+        if (statusResult.success) {
+          paymongoStatus = statusResult.data;
+        }
+      } catch (error) {
+        logger.error('Error checking PayMongo status:', error);
+      }
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        order: {
+          id: order.id,
+          orderNumber: order.order_number,
+          paymentStatus: order.payment_status,
+          paymentMethod: order.payment_method,
+          totalAmount: order.total_amount
+        },
+        latestPayment: latestPayment ? {
+          paymentIntentId: latestPayment.payment_intent_id,
+          status: latestPayment.status,
+          paymentStatus: latestPayment.payment_status,
+          amount: latestPayment.amount,
+          createdAt: latestPayment.created_at,
+          paidAt: latestPayment.paid_at,
+          failedAt: latestPayment.failed_at
+        } : null,
+        paymongoStatus: paymongoStatus,
+        paymentHistory: payments.map((payment: any) => ({
+          id: payment.id,
+          paymentIntentId: payment.payment_intent_id,
+          status: payment.status,
+          paymentStatus: payment.payment_status,
+          amount: payment.amount,
+          createdAt: payment.created_at,
+          paidAt: payment.paid_at,
+          failedAt: payment.failed_at
+        }))
+      }
+    });
+
+  } catch (error) {
+    logger.error('Get order payment status error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to fetch payment status'
+    });
+  }
+});
+
+// Get order receipt (Cashier/Admin)
+router.get('/:orderId/receipt', cashierOrAdmin, async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order ID is required'
+      });
+    }
+
+    // Get order details
+    const orderResult = await supabaseService().getOrderById(orderId);
+    if (!orderResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    const order = orderResult.data;
+
+    // Get order items
+    const itemsResult = await supabaseService().getOrderItems(orderId);
+    if (!itemsResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to retrieve order items'
+      });
+    }
+
+    // Get payment history
+    const paymentHistoryResult = await supabaseService().getPaymentHistory(orderId);
+    const payments = paymentHistoryResult.success ? paymentHistoryResult.data || [] : [];
+    const latestPayment = payments.length > 0 ? payments[0] : null;
+
+    // Get order status history
+    const statusHistoryResult = await supabaseService().getOrderStatusHistory(orderId);
+    const statusHistory = statusHistoryResult.success ? statusHistoryResult.data || [] : [];
+
+    // Format receipt data
+    const receipt = {
+      order: {
+        id: order.id,
+        orderNumber: order.order_number,
+        customerName: order.customer_name,
+        customerPhone: order.customer_phone,
+        orderType: order.order_type,
+        tableNumber: order.table_number,
+        status: order.status,
+        paymentStatus: order.payment_status,
+        paymentMethod: order.payment_method,
+        subtotal: order.subtotal,
+        discountAmount: order.discount_amount,
+        taxAmount: order.tax_amount,
+        totalAmount: order.total_amount,
+        specialInstructions: order.special_instructions,
+        createdAt: order.created_at,
+        completedAt: order.completed_at
+      },
+      items: itemsResult.data?.map((item: any) => ({
+        id: item.id,
+        menuItemName: item.menu_item_name,
+        quantity: item.quantity,
+        unitPrice: item.unit_price,
+        totalPrice: item.total_price,
+        customizations: item.customizations,
+        specialInstructions: item.special_instructions
+      })) || [],
+      payment: latestPayment ? {
+        id: latestPayment.id,
+        paymentIntentId: latestPayment.payment_intent_id,
+        paymentId: latestPayment.payment_id,
+        amount: latestPayment.amount,
+        currency: latestPayment.currency,
+        status: latestPayment.status,
+        paymentStatus: latestPayment.payment_status,
+        paymentMethod: latestPayment.payment_method,
+        paymentSourceType: latestPayment.payment_source_type,
+        feeAmount: latestPayment.fee_amount,
+        netAmount: latestPayment.net_amount,
+        externalReferenceNumber: latestPayment.external_reference_number,
+        paidAt: latestPayment.paid_at,
+        failedAt: latestPayment.failed_at,
+        cancelledAt: latestPayment.cancelled_at,
+        createdAt: latestPayment.created_at
+      } : null,
+      statusHistory: statusHistory.map((status: any) => ({
+        id: status.id,
+        status: status.status,
+        notes: status.notes,
+        updatedBy: status.updated_by_user,
+        createdAt: status.created_at
+      })),
+      summary: {
+        totalItems: itemsResult.data?.length || 0,
+        totalQuantity: itemsResult.data?.reduce((sum: number, item: any) => sum + item.quantity, 0) || 0,
+        subtotal: order.subtotal,
+        discountAmount: order.discount_amount,
+        taxAmount: order.tax_amount,
+        totalAmount: order.total_amount,
+        paymentStatus: order.payment_status,
+        isPaid: order.payment_status === 'paid',
+        paymentMethod: order.payment_method
+      }
+    };
+
+    logger.info('Order receipt generated:', {
+      orderId,
+      orderNumber: order.order_number,
+      customerName: order.customer_name,
+      totalAmount: order.total_amount,
+      paymentStatus: order.payment_status,
+      requestedBy: req.user.username
+    });
+
+    return res.json({
+      success: true,
+      message: 'Order receipt retrieved successfully',
+      data: receipt
+    });
+
+  } catch (error) {
+    logger.error('Get order receipt error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve order receipt'
+    });
+  }
+});
+
+// Manually sync PayMongo payment status (Cashier/Admin)
+router.post('/:orderId/sync-payment', cashierOrAdmin, async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order ID is required'
+      });
+    }
+
+    // Get order details
+    const orderResult = await supabaseService().getOrderById(orderId);
+    if (!orderResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    const order = orderResult.data;
+
+    // Get latest payment for this order
+    const paymentHistoryResult = await supabaseService().getPaymentHistory(orderId);
+    
+    if (!paymentHistoryResult.success || !paymentHistoryResult.data || paymentHistoryResult.data.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No payment records found for this order'
+      });
+    }
+
+    const latestPayment = paymentHistoryResult.data[0];
+
+    if (!latestPayment.payment_intent_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'No PayMongo payment intent found for this order'
+      });
+    }
+
+    // Check PayMongo status
+    const { paymongoService } = await import('../services/paymongoService');
+    const statusResult = await paymongoService().getPaymentStatus(latestPayment.payment_intent_id);
+
+    if (!statusResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: statusResult.error || 'Failed to check PayMongo payment status'
+      });
+    }
+
+    const paymongoData = statusResult.data;
+    
+    if (!paymongoData) {
+      return res.status(500).json({
+        success: false,
+        error: 'No payment data received from PayMongo'
+      });
+    }
+
+    let newPaymentStatus = order.payment_status;
+    let shouldUpdateOrder = false;
+
+    // Determine if we need to update the order status
+    if (paymongoData.status === 'succeeded' && order.payment_status !== 'paid') {
+      newPaymentStatus = 'paid';
+      shouldUpdateOrder = true;
+    } else if (paymongoData.status === 'payment_failed' && order.payment_status !== 'failed') {
+      newPaymentStatus = 'failed';
+      shouldUpdateOrder = true;
+    } else if (paymongoData.status === 'cancelled' && order.payment_status !== 'cancelled') {
+      newPaymentStatus = 'cancelled';
+      shouldUpdateOrder = true;
+    }
+
+    // Update order payment status if needed
+    if (shouldUpdateOrder) {
+      const updateResult = await supabaseService().updateOrderPayment(
+        orderId, 
+        newPaymentStatus, 
+        'paymongo', 
+        req.user.id
+      );
+
+      if (!updateResult.success) {
+        logger.error('Failed to update order payment status:', updateResult.error);
+      }
+    }
+
+    // Update payment record with latest PayMongo data
+    const updateData: any = {
+      status: paymongoData.status,
+      paymongo_response: statusResult
+    };
+
+    if (paymongoData.status === 'succeeded') {
+      updateData.payment_status = 'paid';
+      updateData.paid_at = new Date().toISOString();
+    } else if (paymongoData.status === 'payment_failed') {
+      updateData.payment_status = 'failed';
+      updateData.failed_at = new Date().toISOString();
+    } else if (paymongoData.status === 'cancelled') {
+      updateData.payment_status = 'cancelled';
+      updateData.cancelled_at = new Date().toISOString();
+    }
+
+    await supabaseService().updatePaymentRecord(latestPayment.payment_intent_id, updateData);
+
+    logger.info('Payment status synced for order:', {
+      orderId,
+      orderNumber: order.order_number,
+      paymentIntentId: latestPayment.payment_intent_id,
+      oldStatus: order.payment_status,
+      newStatus: newPaymentStatus,
+      paymongoStatus: paymongoData.status,
+      syncedBy: req.user.username
+    });
+
+    return res.json({
+      success: true,
+      message: 'Payment status synced successfully',
+      data: {
+        order: {
+          id: order.id,
+          orderNumber: order.order_number,
+          oldPaymentStatus: order.payment_status,
+          newPaymentStatus: newPaymentStatus,
+          paymentMethod: 'paymongo'
+        },
+        paymongoStatus: paymongoData,
+        wasUpdated: shouldUpdateOrder
+      }
+    });
+
+  } catch (error) {
+    logger.error('Sync payment status error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to sync payment status'
     });
   }
 });
