@@ -18,6 +18,7 @@ import employeeRoutes from './routes/employeeRoutes';
 import syncRoutes from './routes/syncRoutes';
 import networkRoutes from './routes/networkRoutes';
 import paymentRoutes from './routes/paymentRoutes';
+import offlinePaymentRoutes from './routes/offlinePaymentRoutes';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler';
@@ -26,7 +27,10 @@ import { setupWebSocket } from './websocket/websocket';
 
 // Import services
 import { logger } from './utils/logger';
-// import { DatabaseService } from './services/databaseService';
+import { DatabaseService } from './services/databaseService';
+import { OfflineService } from './services/offlineService';
+import { SyncManager } from './services/syncManager';
+import { offlinePaymentService } from './services/offlinePaymentService';
 
 // Load environment variables
 dotenv.config();
@@ -41,8 +45,32 @@ const io = new Server(httpServer, {
   }
 });
 
-// Initialize database service
-// const databaseService = new DatabaseService();
+// Initialize offline services
+const databaseService = DatabaseService.getInstance();
+const offlineService = new OfflineService();
+const syncManager = new SyncManager();
+
+// Wait for database to be ready before starting sync
+setTimeout(async () => {
+  // Wait a bit more for database initialization
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  
+  if (databaseService.isReady()) {
+    syncManager.startSyncProcess();
+    logger.info(`🔄 Sync manager started`);
+    logger.info(`💾 Local database ready: ${process.env['LOCAL_DB_PATH'] || './data/local.db'}`);
+    
+    // Initialize offline payment methods
+    try {
+      await offlinePaymentService.syncPaymentMethodsFromCloud();
+      logger.info(`💳 Offline payment methods initialized`);
+    } catch (error) {
+      logger.warn(`⚠️ Failed to initialize payment methods:`, error);
+    }
+  } else {
+    logger.warn(`⚠️ Database not ready, sync manager will start when database is available`);
+  }
+}, 3000);
 
 // Middleware
 app.use(helmet());
@@ -98,6 +126,43 @@ app.get('/health', (_req, res) => {
   });
 });
 
+// Offline mode health check
+app.get('/health/offline', async (_req, res) => {
+  try {
+    const offlineStatus = await offlineService.getOfflineStatus();
+    const syncStats = await syncManager.getSyncStatistics();
+    
+    res.json({
+      status: 'healthy',
+      offline: {
+        isOnline: offlineStatus.isOnline,
+        networkMode: offlineStatus.networkMode,
+        pendingSyncCount: offlineStatus.pendingSyncCount,
+        pendingConflictsCount: offlineStatus.pendingConflictsCount,
+        registeredDevicesCount: offlineStatus.registeredDevicesCount,
+        lastSyncTime: offlineStatus.lastSyncTime
+      },
+      sync: {
+        inProgress: syncStats.syncInProgress,
+        totalPending: syncStats.totalPending,
+        totalFailed: syncStats.totalFailed,
+        totalConflicts: syncStats.totalConflicts,
+        lastSyncTime: syncStats.lastSyncTime
+      },
+      database: {
+        ready: databaseService.isReady()
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', authMiddleware, orderRoutes);
@@ -108,6 +173,7 @@ app.use('/api/customers', authMiddleware, customerRoutes);
 app.use('/api/employees', authMiddleware, employeeRoutes);
 app.use('/api/sync', authMiddleware, syncRoutes);
 app.use('/api/network', authMiddleware, networkRoutes);
+app.use('/api/offline-payments', authMiddleware, offlinePaymentRoutes);
 // Payment routes - webhook needs to be unauthenticated, others need auth
 // Register webhook route first (unauthenticated)
 app.use('/api/payments/webhook', paymentRoutes);
@@ -136,11 +202,15 @@ httpServer.listen(PORT, () => {
   logger.info(`📊 Environment: ${process.env['NODE_ENV']}`);
   logger.info(`🔗 Supabase URL: ${process.env['SUPABASE_URL']}`);
   logger.info(`🌐 CORS Origin: ${process.env['CORS_ORIGIN']}`);
+  
+  // Database status will be logged after initialization completes
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down gracefully');
+  syncManager.stopSyncProcess();
+  databaseService.close();
   httpServer.close(() => {
     logger.info('Server closed');
     process.exit(0);
@@ -149,6 +219,8 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received, shutting down gracefully');
+  syncManager.stopSyncProcess();
+  databaseService.close();
   httpServer.close(() => {
     logger.info('Server closed');
     process.exit(0);

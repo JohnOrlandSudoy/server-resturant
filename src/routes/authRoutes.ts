@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { supabaseService } from '../services/supabaseService';
 import { jwtService } from '../utils/jwtService';
 import { authMiddleware } from '../middleware/authMiddleware';
+import { databaseService } from '../services/databaseService';
 import { logger } from '../utils/logger';
 
 const router = Router();
@@ -35,6 +36,14 @@ router.post('/login', async (req: Request, res: Response) => {
 
     // Update last login
     await supabaseService().updateUserLastLogin(user.id);
+
+    // Sync user to local database for offline access
+    try {
+      await databaseService.syncUserToLocal(user);
+      logger.info(`User ${username} synced to local database`);
+    } catch (error) {
+      logger.warn(`Failed to sync user ${username} to local database:`, error);
+    }
 
     logger.info(`User ${username} logged in successfully`);
 
@@ -127,6 +136,14 @@ router.post('/register', async (req: Request, res: Response) => {
 
     // Generate JWT token
     const token = jwtService.generateToken(user);
+
+    // Sync user to local database for offline access
+    try {
+      await databaseService.syncUserToLocal(user);
+      logger.info(`User ${username} synced to local database`);
+    } catch (error) {
+      logger.warn(`Failed to sync user ${username} to local database:`, error);
+    }
 
     logger.info(`User ${username} registered successfully`);
 
