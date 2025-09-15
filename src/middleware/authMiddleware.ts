@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { jwtService } from '../utils/jwtService';
 import { supabaseService } from '../services/supabaseService';
+import { offlineService } from '../services/offlineService';
 import { logger } from '../utils/logger';
 
 // Extend Request interface to include user
@@ -30,8 +31,21 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
     try {
       const decoded = jwtService.verifyToken(token);
       
-      // Get user from database to ensure they still exist and are active
-      const userResponse = await supabaseService().getUserById(decoded.id);
+      // Try to get user from database (online first, then offline)
+      let userResponse;
+      
+      if (offlineService.getIsOnline()) {
+        // Online: Try Supabase first
+        try {
+          userResponse = await supabaseService().getUserById(decoded.id);
+        } catch (error) {
+          logger.warn('Supabase user lookup failed, falling back to offline:', error);
+          userResponse = await getOfflineUser(decoded.id);
+        }
+      } else {
+        // Offline: Use local database
+        userResponse = await getOfflineUser(decoded.id);
+      }
       
       if (!userResponse.success || !userResponse.data) {
         res.status(401).json({
@@ -60,6 +74,39 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
     });
   }
 };
+
+// Helper function to get user from offline database
+async function getOfflineUser(userId: string): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const dbService = offlineService['dbService']; // Access private property
+    const user = await dbService.getLocalUser(userId);
+    
+    if (!user) {
+      return { success: false, error: 'User not found' };
+    }
+    
+    // Convert database user to User interface
+    const userData = {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      role: user.role,
+      phone: user.phone,
+      avatarUrl: user.avatar_url,
+      isActive: user.is_active === 1,
+      lastLogin: user.last_login,
+      createdAt: user.created_at,
+      updatedAt: user.updated_at
+    };
+    
+    return { success: true, data: userData };
+  } catch (error) {
+    logger.error('Offline user lookup failed:', error);
+    return { success: false, error: 'Failed to lookup user' };
+  }
+}
 
 export const roleMiddleware = (allowedRoles: string[]) => {
   return (req: Request, res: Response, next: NextFunction): void => {
