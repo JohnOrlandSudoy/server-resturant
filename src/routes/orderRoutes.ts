@@ -287,6 +287,41 @@ router.post('/:orderId/items', cashierOrAdmin, async (req: Request, res: Respons
     }
 
     const menuItem = menuItemResult.data;
+
+    // Check if menu item is available
+    if (!menuItem.isAvailable || !menuItem.isActive) {
+      return res.status(400).json({
+        success: false,
+        error: 'Menu item is not available'
+      });
+    }
+
+    // Check ingredient availability before adding to order
+    const availabilityResult = await supabaseService().getClient()
+      .rpc('get_menu_item_availability', {
+        p_menu_item_id: menu_item_id,
+        p_quantity: quantity
+      });
+
+    // The function returns an array, so we need to get the first element
+    const availability = availabilityResult.data?.[0];
+    
+    if (!availability?.is_available) {
+      const unavailableIngredients = availability?.unavailable_ingredients || [];
+      const ingredientNames = unavailableIngredients.map((ing: any) => ing.ingredient_name).join(', ');
+      
+      return res.status(400).json({
+        success: false,
+        error: `Insufficient ingredients: ${ingredientNames}`,
+        details: {
+          unavailable_ingredients: unavailableIngredients,
+          max_available_quantity: availability?.max_available_quantity || 0,
+          stock_summary: availability?.stock_summary
+        }
+      });
+    }
+
+
     const unitPrice = menuItem.price;
     const totalPrice = unitPrice * quantity;
 
@@ -309,10 +344,38 @@ router.post('/:orderId/items', cashierOrAdmin, async (req: Request, res: Respons
       });
     }
 
+    // Format the response to include ingredient information
+    const orderItem = result.data;
+    const menuItemData = orderItem.menu_item;
+    
+    // Process ingredients data
+    const ingredients = (menuItemData as any)?.menu_item_ingredients?.map((mi: any) => ({
+      id: mi.ingredients.id,
+      name: mi.ingredients.name,
+      quantity_required: mi.quantity_required,
+      unit: mi.unit,
+      is_optional: mi.is_optional,
+      current_stock: mi.ingredients.current_stock,
+      min_stock_threshold: mi.ingredients.min_stock_threshold,
+      stock_status: mi.ingredients.current_stock <= 0 ? 'out_of_stock' : 
+                   mi.ingredients.current_stock <= mi.ingredients.min_stock_threshold ? 'low_stock' : 'sufficient',
+      total_required_for_order: mi.quantity_required * quantity
+    })) || [];
+
+    const formattedResponse = {
+      ...orderItem,
+      menu_item: {
+        name: menuItemData?.name,
+        description: menuItemData?.description,
+        image_url: (menuItemData as any)?.image_url,
+        ingredients: ingredients
+      }
+    };
+
     return res.status(201).json({
       success: true,
       message: 'Item added to order successfully',
-      data: result.data
+      data: formattedResponse
     });
 
   } catch (error) {
@@ -344,6 +407,53 @@ router.put('/items/:itemId', cashierOrAdmin, async (req: Request, res: Response)
       });
     }
 
+    // If quantity is being updated, check ingredient availability
+    if (quantity !== undefined) {
+      // Get current order item to check menu item and current quantity
+      const currentItemResult = await supabaseService().getOrderItemById(itemId);
+      
+      if (!currentItemResult.success) {
+        return res.status(404).json({
+          success: false,
+          error: 'Order item not found'
+        });
+      }
+
+      const currentItem = currentItemResult.data;
+      const quantityDifference = quantity - currentItem.quantity;
+
+      // If increasing quantity, check if ingredients are available
+      if (quantityDifference > 0) {
+        const availabilityResult = await supabaseService().getClient()
+          .rpc('get_menu_item_availability', {
+            p_menu_item_id: currentItem.menu_item_id,
+            p_quantity: quantityDifference
+          });
+
+        // The function returns an array, so we need to get the first element
+        const availability = availabilityResult.data?.[0];
+
+        if (!availability?.is_available) {
+          const unavailableIngredients = availability?.unavailable_ingredients || [];
+          const ingredientNames = unavailableIngredients.map((ing: any) => ing.ingredient_name).join(', ');
+          
+          return res.status(400).json({
+            success: false,
+            error: `Insufficient ingredients for additional quantity: ${ingredientNames}`,
+            details: {
+              unavailable_ingredients: unavailableIngredients,
+              max_available_quantity: availability?.max_available_quantity || 0,
+              current_quantity: currentItem.quantity,
+              requested_quantity: quantity,
+              additional_needed: quantityDifference,
+              stock_summary: availability?.stock_summary
+            }
+          });
+        }
+      }
+    }
+
+
     const updateData: any = {};
     if (quantity !== undefined) updateData.quantity = quantity;
     if (customizations !== undefined) updateData.customizations = JSON.stringify(customizations);
@@ -358,10 +468,38 @@ router.put('/items/:itemId', cashierOrAdmin, async (req: Request, res: Response)
       });
     }
 
+    // Format the response to include ingredient information
+    const orderItem = result.data;
+    const menuItemData = orderItem.menu_item;
+    
+    // Process ingredients data
+    const ingredients = (menuItemData as any)?.menu_item_ingredients?.map((mi: any) => ({
+      id: mi.ingredients.id,
+      name: mi.ingredients.name,
+      quantity_required: mi.quantity_required,
+      unit: mi.unit,
+      is_optional: mi.is_optional,
+      current_stock: mi.ingredients.current_stock,
+      min_stock_threshold: mi.ingredients.min_stock_threshold,
+      stock_status: mi.ingredients.current_stock <= 0 ? 'out_of_stock' : 
+                   mi.ingredients.current_stock <= mi.ingredients.min_stock_threshold ? 'low_stock' : 'sufficient',
+      total_required_for_order: mi.quantity_required * orderItem.quantity
+    })) || [];
+
+    const formattedResponse = {
+      ...orderItem,
+      menu_item: {
+        name: menuItemData?.name,
+        description: menuItemData?.description,
+        image_url: (menuItemData as any)?.image_url,
+        ingredients: ingredients
+      }
+    };
+
     return res.json({
       success: true,
       message: 'Order item updated successfully',
-      data: result.data
+      data: formattedResponse
     });
 
   } catch (error) {
@@ -665,6 +803,585 @@ router.get('/discounts/available', cashierOrAdmin, async (_req: Request, res: Re
     return res.status(500).json({
       success: false,
       error: 'Failed to fetch discounts'
+    });
+  }
+});
+
+// =====================================================
+// INGREDIENT STOCK MANAGEMENT ENDPOINTS
+// =====================================================
+
+// Check menu item availability (Cashier/Admin)
+router.get('/menu-items/:menuItemId/availability', cashierOrAdmin, async (req: Request, res: Response) => {
+  try {
+    const { menuItemId } = req.params;
+    const { quantity = 1 } = req.query;
+
+    if (!menuItemId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Menu item ID is required'
+      });
+    }
+
+    const result = await supabaseService().getClient()
+      .rpc('get_menu_item_availability', {
+        p_menu_item_id: menuItemId,
+        p_quantity: parseInt(quantity as string)
+      });
+
+    if (result.error) {
+      return res.status(500).json({
+        success: false,
+        error: `Failed to check availability: ${result.error.message}`
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: result.data
+    });
+  } catch (error) {
+    logger.error('Check menu item availability error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to check menu item availability'
+    });
+  }
+});
+
+// Get ingredient stock status (Admin only)
+router.get('/inventory/stock-status', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabaseService().getClient()
+      .from('ingredient_stock_status')
+      .select('*')
+      .order('stock_status', { ascending: true });
+
+    if (error) {
+      return res.status(500).json({
+        success: false,
+        error: `Failed to fetch stock status: ${error.message}`
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    logger.error('Get stock status error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to get stock status'
+    });
+  }
+});
+
+// Get active stock alerts (Admin only)
+router.get('/inventory/alerts', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabaseService().getClient()
+      .from('active_stock_alerts')
+      .select('*');
+
+    if (error) {
+      return res.status(500).json({
+        success: false,
+        error: `Failed to fetch alerts: ${error.message}`
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    logger.error('Get stock alerts error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to get stock alerts'
+    });
+  }
+});
+
+// Check order availability before checkout (Cashier/Admin)
+router.post('/:orderId/check-availability', cashierOrAdmin, async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order ID is required'
+      });
+    }
+
+    // Get order items
+    const orderItemsResult = await supabaseService().getOrderItems(orderId);
+    if (!orderItemsResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    const orderItems = orderItemsResult.data || [];
+    const availabilityChecks = [];
+    let hasUnavailableItems = false;
+
+    // Check each order item
+    for (const item of orderItems) {
+      const availabilityResult = await supabaseService().getClient()
+        .rpc('get_menu_item_availability', {
+          p_menu_item_id: item.menu_item_id,
+          p_quantity: item.quantity
+        });
+
+      const availability = availabilityResult.data?.[0];
+      availabilityChecks.push({
+        order_item_id: item.id,
+        menu_item_id: item.menu_item_id,
+        menu_item_name: item.menu_item_name,
+        quantity: item.quantity,
+        is_available: availability?.is_available || false,
+        unavailable_ingredients: availability?.unavailable_ingredients || [],
+        max_available_quantity: availability?.max_available_quantity || 0,
+        stock_summary: availability?.stock_summary || {}
+      });
+
+      if (!availability?.is_available) {
+        hasUnavailableItems = true;
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        order_id: orderId,
+        can_checkout: !hasUnavailableItems,
+        has_unavailable_items: hasUnavailableItems,
+        items: availabilityChecks,
+        summary: {
+          total_items: orderItems.length,
+          available_items: availabilityChecks.filter(item => item.is_available).length,
+          unavailable_items: availabilityChecks.filter(item => !item.is_available).length
+        }
+      }
+    });
+  } catch (error) {
+    logger.error('Check order availability error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to check order availability'
+    });
+  }
+});
+
+// =====================================================
+// NEW ENDPOINTS FOR CASHIER INGREDIENT VALIDATION
+// =====================================================
+
+/**
+ * @route GET /api/orders/:orderId/ingredient-validation
+ * @desc Check ingredient availability for entire order (including existing items)
+ * @access Private (Cashier/Admin)
+ */
+router.get('/:orderId/ingredient-validation', cashierOrAdmin, async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order ID is required'
+      });
+    }
+
+    // Get order details
+    const orderResult = await supabaseService().getOrderById(orderId);
+    if (!orderResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    const order = orderResult.data;
+
+    // Get all order items
+    const orderItemsResult = await supabaseService().getOrderItems(orderId);
+    if (!orderItemsResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch order items'
+      });
+    }
+
+    const orderItems = orderItemsResult.data || [];
+
+    logger.info('Order items fetched:', { 
+      orderId, 
+      orderItemsCount: orderItems.length,
+      orderItems: orderItems.map(item => ({
+        id: item.id,
+        menu_item_id: item.menu_item_id,
+        quantity: item.quantity
+      }))
+    });
+
+    // Check ingredient availability for each item
+    const validationResults = [];
+    let totalUnavailableIngredients = 0;
+    let totalLowStockIngredients = 0;
+    let totalSufficientIngredients = 0;
+
+    for (const item of orderItems) {
+      logger.info('Processing order item:', { 
+        item_id: item.id, 
+        menu_item_id: item.menu_item_id, 
+        quantity: item.quantity 
+      });
+
+      const availabilityResult = await supabaseService().getClient()
+        .rpc('get_menu_item_availability', {
+          p_menu_item_id: item.menu_item_id,
+          p_quantity: item.quantity
+        });
+
+      logger.info('Availability result:', { 
+        item_id: item.id, 
+        availabilityResult: availabilityResult.data,
+        error: availabilityResult.error 
+      });
+
+      if (availabilityResult.data && availabilityResult.data.length > 0) {
+        const availability = availabilityResult.data[0];
+        validationResults.push({
+          order_item_id: item.id,
+          menu_item_id: item.menu_item_id,
+          menu_item_name: availability.menu_item_name,
+          current_quantity: item.quantity,
+          is_available: availability.is_available,
+          unavailable_ingredients: availability.unavailable_ingredients || [],
+          max_available_quantity: availability.max_available_quantity,
+          stock_summary: availability.stock_summary
+        });
+
+        // Count ingredient status
+        if (availability.stock_summary) {
+          totalUnavailableIngredients += availability.stock_summary.out_of_stock_count || 0;
+          totalLowStockIngredients += availability.stock_summary.low_stock_count || 0;
+          totalSufficientIngredients += availability.stock_summary.sufficient_count || 0;
+        }
+      } else {
+        logger.error('No availability data for item:', { 
+          item_id: item.id, 
+          menu_item_id: item.menu_item_id,
+          error: availabilityResult.error 
+        });
+      }
+    }
+
+    // Overall order validation
+    const allItemsAvailable = validationResults.every(item => item.is_available);
+    const hasLowStockItems = validationResults.some(item => 
+      item.stock_summary?.low_stock_count > 0
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        order_id: orderId,
+        order_number: order.order_number,
+        customer_name: order.customer_name,
+        order_status: order.status,
+        overall_validation: {
+          all_items_available: allItemsAvailable,
+          has_low_stock_items: hasLowStockItems,
+          total_items: orderItems.length,
+          available_items: validationResults.filter(item => item.is_available).length,
+          unavailable_items: validationResults.filter(item => !item.is_available).length
+        },
+        ingredient_summary: {
+          total_unavailable_ingredients: totalUnavailableIngredients,
+          total_low_stock_ingredients: totalLowStockIngredients,
+          total_sufficient_ingredients: totalSufficientIngredients,
+          total_ingredients: totalUnavailableIngredients + totalLowStockIngredients + totalSufficientIngredients
+        },
+        item_details: validationResults
+      }
+    });
+
+  } catch (error) {
+    logger.error('Order ingredient validation error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to validate order ingredients'
+    });
+  }
+});
+
+/**
+ * @route POST /api/orders/:orderId/check-quantity-increase
+ * @desc Check if increasing quantity of existing items would cause ingredient shortage
+ * @access Private (Cashier/Admin)
+ */
+router.post('/:orderId/check-quantity-increase', cashierOrAdmin, async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+    const { item_updates } = req.body; // Array of {item_id, new_quantity}
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order ID is required'
+      });
+    }
+
+    if (!item_updates || !Array.isArray(item_updates)) {
+      return res.status(400).json({
+        success: false,
+        error: 'item_updates array is required'
+      });
+    }
+
+    // Get order details
+    const orderResult = await supabaseService().getOrderById(orderId);
+    if (!orderResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    // Get current order items
+    const orderItemsResult = await supabaseService().getOrderItems(orderId);
+    if (!orderItemsResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch order items'
+      });
+    }
+
+    const currentItems = orderItemsResult.data || [];
+    const validationResults = [];
+    let hasInsufficientStock = false;
+
+    for (const update of item_updates) {
+      const { item_id, new_quantity } = update;
+      
+      // Find current item
+      const currentItem = currentItems.find(item => item.id === item_id);
+      if (!currentItem) {
+        validationResults.push({
+          item_id,
+          error: 'Item not found in order'
+        });
+        continue;
+      }
+
+      // Check if new quantity is higher than current
+      if (new_quantity <= currentItem.quantity) {
+        validationResults.push({
+          item_id,
+          menu_item_id: currentItem.menu_item_id,
+          current_quantity: currentItem.quantity,
+          new_quantity,
+          quantity_change: new_quantity - currentItem.quantity,
+          is_available: true,
+          message: 'Quantity decrease or no change - no additional ingredients needed'
+        });
+        continue;
+      }
+
+      // Calculate additional quantity needed
+      const additionalQuantity = new_quantity - currentItem.quantity;
+
+      // Check ingredient availability for additional quantity
+      const availabilityResult = await supabaseService().getClient()
+        .rpc('get_menu_item_availability', {
+          p_menu_item_id: currentItem.menu_item_id,
+          p_quantity: additionalQuantity
+        });
+
+      if (availabilityResult.data && availabilityResult.data.length > 0) {
+        const availability = availabilityResult.data[0];
+        const isAvailable = availability.is_available;
+        
+        if (!isAvailable) {
+          hasInsufficientStock = true;
+        }
+
+        validationResults.push({
+          item_id,
+          menu_item_id: currentItem.menu_item_id,
+          menu_item_name: availability.menu_item_name,
+          current_quantity: currentItem.quantity,
+          new_quantity,
+          quantity_change: additionalQuantity,
+          is_available: isAvailable,
+          unavailable_ingredients: availability.unavailable_ingredients || [],
+          max_additional_quantity: availability.max_available_quantity,
+          stock_summary: availability.stock_summary
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        order_id: orderId,
+        can_increase_quantities: !hasInsufficientStock,
+        total_items_checked: item_updates.length,
+        available_increases: validationResults.filter(item => item.is_available).length,
+        blocked_increases: validationResults.filter(item => !item.is_available).length,
+        validation_results: validationResults
+      }
+    });
+
+  } catch (error) {
+    logger.error('Quantity increase validation error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to validate quantity increases'
+    });
+  }
+});
+
+/**
+ * @route GET /api/orders/:orderId/ingredient-summary
+ * @desc Get a summary of all ingredients needed for the entire order
+ * @access Private (Cashier/Admin)
+ */
+router.get('/:orderId/ingredient-summary', cashierOrAdmin, async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order ID is required'
+      });
+    }
+
+    // Get order details
+    const orderResult = await supabaseService().getOrderById(orderId);
+    if (!orderResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    // Get all order items with their ingredients
+    const { data: orderItems, error: itemsError } = await supabaseService().getClient()
+      .from('order_items')
+      .select(`
+        id,
+        quantity,
+        menu_item_id,
+        menu_items!inner (
+          name,
+          menu_item_ingredients (
+            quantity_required,
+            unit,
+            is_optional,
+            ingredients!inner (
+              id,
+              name,
+              current_stock,
+              min_stock_threshold,
+              unit,
+              is_active
+            )
+          )
+        )
+      `)
+      .eq('order_id', orderId);
+
+    if (itemsError) {
+      logger.error('Database error fetching order items:', itemsError);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch order items'
+      });
+    }
+
+    // Calculate total ingredients needed
+    const ingredientSummary = new Map();
+
+    for (const item of orderItems) {
+      const menuItem = item.menu_items as any;
+      if (!menuItem || !menuItem.menu_item_ingredients) continue;
+
+      for (const menuIngredient of menuItem.menu_item_ingredients) {
+        const ingredient = menuIngredient.ingredients;
+        if (!ingredient || !ingredient.is_active) continue;
+
+        const totalNeeded = menuIngredient.quantity_required * item.quantity;
+        const key = ingredient.id;
+
+        if (ingredientSummary.has(key)) {
+          const existing = ingredientSummary.get(key);
+          existing.total_required += totalNeeded;
+          existing.menu_items.push({
+            menu_item_name: menuItem.name,
+            quantity: item.quantity,
+            required_per_item: menuIngredient.quantity_required,
+            total_required: totalNeeded
+          });
+        } else {
+          ingredientSummary.set(key, {
+            ingredient_id: ingredient.id,
+            ingredient_name: ingredient.name,
+            current_stock: ingredient.current_stock,
+            min_stock_threshold: ingredient.min_stock_threshold,
+            unit: ingredient.unit,
+            total_required: totalNeeded,
+            stock_status: ingredient.current_stock <= 0 ? 'out_of_stock' : 
+                         ingredient.current_stock <= ingredient.min_stock_threshold ? 'low_stock' : 'sufficient',
+            shortage_amount: Math.max(0, totalNeeded - ingredient.current_stock),
+            menu_items: [{
+              menu_item_name: menuItem.name,
+              quantity: item.quantity,
+              required_per_item: menuIngredient.quantity_required,
+              total_required: totalNeeded
+            }]
+          });
+        }
+      }
+    }
+
+    // Convert to array and sort by shortage amount
+    const summaryArray = Array.from(ingredientSummary.values())
+      .sort((a, b) => b.shortage_amount - a.shortage_amount);
+
+    // Calculate totals
+    const totals = {
+      total_ingredients: summaryArray.length,
+      out_of_stock_count: summaryArray.filter(ing => ing.stock_status === 'out_of_stock').length,
+      low_stock_count: summaryArray.filter(ing => ing.stock_status === 'low_stock').length,
+      sufficient_count: summaryArray.filter(ing => ing.stock_status === 'sufficient').length,
+      total_shortage_amount: summaryArray.reduce((sum, ing) => sum + ing.shortage_amount, 0)
+    };
+
+    return res.json({
+      success: true,
+      data: {
+        order_id: orderId,
+        order_number: orderResult.data.order_number,
+        customer_name: orderResult.data.customer_name,
+        totals,
+        ingredients: summaryArray
+      }
+    });
+
+  } catch (error) {
+    logger.error('Ingredient summary error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to generate ingredient summary'
     });
   }
 });
