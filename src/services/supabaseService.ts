@@ -532,9 +532,35 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
         };
       }
 
+      // Map database fields to interface format
+      const menuItem: MenuItem = {
+        id: data.id,
+        name: data.name,
+        description: data.description,
+        price: data.price,
+        categoryId: data.category_id,
+        imageUrl: data.image_url,
+        prepTime: data.prep_time,
+        isAvailable: data.is_available,
+        isFeatured: data.is_featured,
+        popularity: data.popularity,
+        calories: data.calories,
+        allergens: data.allergens,
+        isActive: data.is_active,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+        ingredients: data.menu_item_ingredients || [],
+        image_file: data.image_file,
+        image_filename: data.image_filename,
+        image_mime_type: data.image_mime_type,
+        image_size: data.image_size,
+        image_alt_text: data.image_alt_text,
+        image_uploaded_at: data.image_uploaded_at
+      };
+
       return {
         success: true,
-        data
+        data: menuItem
       };
     } catch (error) {
       logger.error('Get menu item error:', error);
@@ -2171,6 +2197,43 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
     }
   }
 
+  async getOrderItemById(id: string): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('order_items')
+        .select(`
+          *,
+          menu_item:menu_items!order_items_menu_item_id_fkey (name, description, image_url)
+        `)
+        .eq('id', id)
+        .single();
+
+      if (error) {
+        logger.error('Database error getting order item:', { 
+          error: error.message, 
+          details: error.details, 
+          hint: error.hint,
+          code: error.code 
+        });
+        return {
+          success: false,
+          error: `Failed to get order item: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Get order item error:', error);
+      return {
+        success: false,
+        error: 'Failed to get order item'
+      };
+    }
+  }
+
   async addOrderItem(orderItemData: any): Promise<ApiResponse<any>> {
     try {
       const insertData: Record<string, any> = {
@@ -2188,7 +2251,24 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
         .insert(insertData)
         .select(`
           *,
-          menu_item:menu_items!order_items_menu_item_id_fkey (name, description, image_url)
+          menu_item:menu_items!order_items_menu_item_id_fkey (
+            name, 
+            description, 
+            image_url,
+            menu_item_ingredients (
+              quantity_required,
+              unit,
+              is_optional,
+              ingredients!inner (
+                id,
+                name,
+                current_stock,
+                min_stock_threshold,
+                unit,
+                is_active
+              )
+            )
+          )
         `)
         .single();
 
@@ -2227,7 +2307,24 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
         .eq('id', id)
         .select(`
           *,
-          menu_item:menu_items!order_items_menu_item_id_fkey (name, description, image_url)
+          menu_item:menu_items!order_items_menu_item_id_fkey (
+            name, 
+            description, 
+            image_url,
+            menu_item_ingredients (
+              quantity_required,
+              unit,
+              is_optional,
+              ingredients!inner (
+                id,
+                name,
+                current_stock,
+                min_stock_threshold,
+                unit,
+                is_active
+              )
+            )
+          )
         `)
         .single();
 
