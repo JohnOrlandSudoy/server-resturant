@@ -51,6 +51,8 @@ export class SupabaseService {
     if (dbUser.phone) user.phone = dbUser.phone;
     if (dbUser.avatar_url) user.avatarUrl = dbUser.avatar_url;
     if (dbUser.last_login) user.lastLogin = dbUser.last_login;
+    if (dbUser.email_verified !== undefined) user.emailVerified = dbUser.email_verified;
+    if (dbUser.password_hash) user.passwordHash = dbUser.password_hash;
 
     return user;
   }
@@ -318,6 +320,196 @@ export class SupabaseService {
       };
     }
   }
+
+  // Password Reset Methods
+  async createPasswordResetToken(email: string): Promise<ApiResponse<{ token: string; expiresAt: string; userId: string }>> {
+    try {
+      const { data, error } = await this.client
+        .rpc('create_password_reset_token', { user_email: email });
+
+      if (error) {
+        logger.error('Create password reset token error:', error);
+        return {
+          success: false,
+          error: error.message || 'Failed to create password reset token'
+        };
+      }
+
+      if (!data || !data.success) {
+        return {
+          success: false,
+          error: data?.error || 'Failed to create password reset token'
+        };
+      }
+
+      return {
+        success: true,
+        data: {
+          token: data.token,
+          expiresAt: data.expires_at,
+          userId: data.user_id
+        }
+      };
+    } catch (error) {
+      logger.error('Create password reset token error:', error);
+      return {
+        success: false,
+        error: 'Failed to create password reset token'
+      };
+    }
+  }
+
+  async verifyPasswordResetToken(token: string): Promise<ApiResponse<{ userId: string; username: string; email: string }>> {
+    try {
+      const { data, error } = await this.client
+        .rpc('verify_password_reset_token', { token_value: token });
+
+      if (error) {
+        logger.error('Verify password reset token error:', error);
+        return {
+          success: false,
+          error: error.message || 'Failed to verify password reset token'
+        };
+      }
+
+      if (!data || !data.success) {
+        return {
+          success: false,
+          error: data?.error || 'Invalid or expired token'
+        };
+      }
+
+      return {
+        success: true,
+        data: {
+          userId: data.user_id,
+          username: data.username,
+          email: data.email
+        }
+      };
+    } catch (error) {
+      logger.error('Verify password reset token error:', error);
+      return {
+        success: false,
+        error: 'Failed to verify password reset token'
+      };
+    }
+  }
+
+  async resetPassword(token: string, newPasswordHash: string): Promise<ApiResponse<{ userId: string; username: string }>> {
+    try {
+      const { data, error } = await this.client
+        .rpc('reset_user_password', { 
+          token_value: token, 
+          new_password_hash: newPasswordHash 
+        });
+
+      if (error) {
+        logger.error('Reset password error:', error);
+        return {
+          success: false,
+          error: error.message || 'Failed to reset password'
+        };
+      }
+
+      if (!data || !data.success) {
+        return {
+          success: false,
+          error: data?.error || 'Failed to reset password'
+        };
+      }
+
+      return {
+        success: true,
+        data: {
+          userId: data.user_id,
+          username: data.username
+        }
+      };
+    } catch (error) {
+      logger.error('Reset password error:', error);
+      return {
+        success: false,
+        error: 'Failed to reset password'
+      };
+    }
+  }
+
+  // Email Verification Methods
+  async createEmailVerificationToken(email: string): Promise<ApiResponse<{ token: string; expiresAt: string; userId: string }>> {
+    try {
+      const { data, error } = await this.client
+        .rpc('create_email_verification_token', { user_email: email });
+
+      if (error) {
+        logger.error('Create email verification token error:', error);
+        return {
+          success: false,
+          error: error.message || 'Failed to create email verification token'
+        };
+      }
+
+      if (!data || !data.success) {
+        return {
+          success: false,
+          error: data?.error || 'Failed to create email verification token'
+        };
+      }
+
+      return {
+        success: true,
+        data: {
+          token: data.token,
+          expiresAt: data.expires_at,
+          userId: data.user_id
+        }
+      };
+    } catch (error) {
+      logger.error('Create email verification token error:', error);
+      return {
+        success: false,
+        error: 'Failed to create email verification token'
+      };
+    }
+  }
+
+  async verifyEmail(token: string): Promise<ApiResponse<{ userId: string; username: string; email: string }>> {
+    try {
+      const { data, error } = await this.client
+        .rpc('verify_user_email', { token_value: token });
+
+      if (error) {
+        logger.error('Verify email error:', error);
+        return {
+          success: false,
+          error: error.message || 'Failed to verify email'
+        };
+      }
+
+      if (!data || !data.success) {
+        return {
+          success: false,
+          error: data?.error || 'Invalid or expired token'
+        };
+      }
+
+      return {
+        success: true,
+        data: {
+          userId: data.user_id,
+          username: data.username,
+          email: data.email
+        }
+      };
+    } catch (error) {
+      logger.error('Verify email error:', error);
+      return {
+        success: false,
+        error: 'Failed to verify email'
+      };
+    }
+  }
+
 
   async updateUserLastLogin(userId: string): Promise<ApiResponse<User>> {
     try {
@@ -2713,6 +2905,95 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
       return {
         success: false,
         error: 'Failed to apply discount'
+      };
+    }
+  }
+
+  async updateDiscount(discountId: string, updateData: any): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('discounts')
+        .update({
+          ...updateData,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', discountId)
+        .select()
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: `Failed to update discount: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Update discount error:', error);
+      return {
+        success: false,
+        error: 'Failed to update discount'
+      };
+    }
+  }
+
+  async deleteDiscount(discountId: string): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('discounts')
+        .delete()
+        .eq('id', discountId)
+        .select()
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: `Failed to delete discount: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Delete discount error:', error);
+      return {
+        success: false,
+        error: 'Failed to delete discount'
+      };
+    }
+  }
+
+  async getDiscountById(discountId: string): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('discounts')
+        .select('*')
+        .eq('id', discountId)
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Discount not found'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Get discount by ID error:', error);
+      return {
+        success: false,
+        error: 'Failed to get discount'
       };
     }
   }

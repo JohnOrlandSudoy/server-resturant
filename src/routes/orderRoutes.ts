@@ -1532,6 +1532,147 @@ router.post('/:orderId/discounts', cashierOrAdmin, async (req: Request, res: Res
   }
 });
 
+// Get single discount by ID (Admin only)
+router.get('/discounts/:id', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Discount ID is required'
+      });
+    }
+
+    const result = await supabaseService().getDiscountById(id);
+
+    if (!result.success) {
+      return res.status(404).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: result.data
+    });
+
+  } catch (error) {
+    logger.error('Get discount error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to fetch discount'
+    });
+  }
+});
+
+// Update discount (Admin only)
+router.put('/discounts/:id', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const {
+      code,
+      name,
+      description,
+      discount_type,
+      discount_value,
+      minimum_order_amount,
+      maximum_discount_amount,
+      is_active,
+      valid_until,
+      usage_limit
+    } = req.body;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Discount ID is required'
+      });
+    }
+
+    // Validate discount type if provided
+    if (discount_type && !['percentage', 'fixed_amount'].includes(discount_type)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid discount_type. Must be "percentage" or "fixed_amount"'
+      });
+    }
+
+    // Build update data object
+    const updateData: any = {};
+    
+    if (code !== undefined) updateData.code = code.toUpperCase();
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (discount_type !== undefined) updateData.discount_type = discount_type;
+    if (discount_value !== undefined) updateData.discount_value = parseFloat(discount_value);
+    if (minimum_order_amount !== undefined) updateData.minimum_order_amount = parseFloat(minimum_order_amount);
+    if (maximum_discount_amount !== undefined) updateData.maximum_discount_amount = maximum_discount_amount ? parseFloat(maximum_discount_amount) : null;
+    if (is_active !== undefined) updateData.is_active = is_active;
+    if (valid_until !== undefined) updateData.valid_until = valid_until;
+    if (usage_limit !== undefined) updateData.usage_limit = usage_limit;
+
+    const result = await supabaseService().updateDiscount(id, updateData);
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Discount updated successfully',
+      data: result.data
+    });
+
+  } catch (error) {
+    logger.error('Update discount error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to update discount'
+    });
+  }
+});
+
+// Delete discount (Admin only)
+router.delete('/discounts/:id', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Discount ID is required'
+      });
+    }
+
+    const result = await supabaseService().deleteDiscount(id);
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Discount deleted successfully',
+      data: result.data
+    });
+
+  } catch (error) {
+    logger.error('Delete discount error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to delete discount'
+    });
+  }
+});
+
 // =====================================================
 // ADMIN ENDPOINTS
 // =====================================================

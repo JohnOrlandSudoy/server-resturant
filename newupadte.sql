@@ -21,6 +21,16 @@ CREATE TABLE public.discounts (
   CONSTRAINT discounts_pkey PRIMARY KEY (id),
   CONSTRAINT discounts_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id)
 );
+CREATE TABLE public.email_verification_tokens (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid NOT NULL,
+  token character varying NOT NULL UNIQUE,
+  expires_at timestamp with time zone NOT NULL,
+  used boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT email_verification_tokens_pkey PRIMARY KEY (id),
+  CONSTRAINT email_verification_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id)
+);
 CREATE TABLE public.ingredients (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
   name character varying NOT NULL UNIQUE,
@@ -186,6 +196,16 @@ CREATE TABLE public.orders (
   CONSTRAINT orders_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id),
   CONSTRAINT orders_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.user_profiles(id)
 );
+CREATE TABLE public.password_reset_tokens (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid NOT NULL,
+  token character varying NOT NULL UNIQUE,
+  expires_at timestamp with time zone NOT NULL,
+  used boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT password_reset_tokens_pkey PRIMARY KEY (id),
+  CONSTRAINT password_reset_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id)
+);
 CREATE TABLE public.payment_methods_config (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
   method_key character varying NOT NULL UNIQUE CHECK (method_key::text = ANY (ARRAY['cash'::character varying, 'gcash'::character varying, 'card'::character varying, 'paymongo'::character varying, 'qrph'::character varying, 'grab_pay'::character varying, 'shopeepay'::character varying]::text[])),
@@ -312,5 +332,10 @@ CREATE TABLE public.user_profiles (
   avatar_size integer,
   avatar_alt_text character varying,
   avatar_uploaded_at timestamp with time zone DEFAULT now(),
+  password_hash character varying,
+  email_verified boolean DEFAULT false,
+  email_verification_token character varying,
+  password_reset_token character varying,
+  password_reset_expires timestamp with time zone,
   CONSTRAINT user_profiles_pkey PRIMARY KEY (id)
 );
