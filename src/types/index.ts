@@ -14,6 +14,8 @@ export interface User {
   lastLogin?: string;
   createdAt: string;
   updatedAt: string;
+  emailVerified?: boolean;
+  passwordHash?: string;
 }
 
 // Database User interface (matches snake_case column names)
@@ -30,6 +32,11 @@ export interface DatabaseUser {
   last_login?: string;
   created_at: string;
   updated_at: string;
+  email_verified?: boolean;
+  password_hash?: string;
+  password_reset_token?: string;
+  password_reset_expires?: string;
+  email_verification_token?: string;
 }
 
 export interface AuthRequest {
