@@ -1,4 +1,4 @@
--- Setup Payment Methods Configuration
+ -- Setup Payment Methods Configuration
 -- This script populates the payment_methods_config table with default payment methods
 
 -- Insert default payment methods if they don't exist
