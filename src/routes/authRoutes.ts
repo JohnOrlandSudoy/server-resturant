@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { supabaseService } from '../services/supabaseService';
 import { jwtService } from '../utils/jwtService';
-import { authMiddleware } from '../middleware/authMiddleware';
+import { authMiddleware, adminOnly } from '../middleware/authMiddleware';
 import { databaseService } from '../services/databaseService';
 import { emailService } from '../services/emailService';
 import { logger } from '../utils/logger';
@@ -76,25 +76,25 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 });
 
-// Register endpoint
-router.post('/register', async (req: Request, res: Response) => {
+// Register endpoint (Admin only - for creating system users)
+router.post('/register', authMiddleware, adminOnly, async (req: Request, res: Response) => {
   try {
-    const { username, email, password, role, first_name, last_name, phone } = req.body;
+    const { username, email, password, role, firstName, lastName, phone } = req.body;
 
     // Validate required fields
-    if (!username || !email || !password || !role || !first_name || !last_name) {
+    if (!username || !email || !password || !role || !firstName || !lastName) {
       return res.status(400).json({
         success: false,
-        error: 'Username, email, password, role, first_name, and last_name are required'
+        error: 'Username, email, password, role, firstName, and lastName are required'
       });
     }
 
     // Validate role
-    const validRoles = ['admin', 'cashier', 'kitchen', 'inventory_manager'];
+    const validRoles = ['admin', 'cashier', 'kitchen'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid role. Must be one of: admin, cashier, kitchen, inventory_manager'
+        error: 'Invalid role. Must be one of: admin, cashier, kitchen'
       });
     }
 
@@ -122,8 +122,8 @@ router.post('/register', async (req: Request, res: Response) => {
       email,
       password,
       role,
-      firstName: first_name,
-      lastName: last_name,
+      firstName,
+      lastName,
       phone: phone || undefined
     });
 
@@ -169,6 +169,468 @@ router.post('/register', async (req: Request, res: Response) => {
 
   } catch (error) {
     logger.error('Register error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Create Admin User endpoint (Admin only)
+router.post('/create-admin', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { username, email, password, firstName, lastName, phone } = req.body;
+
+    // Validate required fields
+    if (!username || !email || !password || !firstName || !lastName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username, email, password, firstName, and lastName are required'
+      });
+    }
+
+    // Check if username already exists
+    const existingUser = await supabaseService().getUserByUsername(username);
+    if (existingUser.success && existingUser.data) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username already exists'
+      });
+    }
+
+    // Check if email already exists
+    const existingEmail = await supabaseService().getUserByEmail(email);
+    if (existingEmail.success && existingEmail.data) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email already exists'
+      });
+    }
+
+    // Create admin user
+    const createResponse = await supabaseService().createUser({
+      username,
+      email,
+      password,
+      role: 'admin',
+      firstName,
+      lastName,
+      phone: phone || undefined
+    });
+
+    if (!createResponse.success || !createResponse.data) {
+      return res.status(500).json({
+        success: false,
+        error: createResponse.error || 'Failed to create admin user'
+      });
+    }
+
+    const user = createResponse.data;
+
+    // Generate JWT token
+    const token = jwtService.generateToken(user);
+
+    // Sync user to local database for offline access
+    try {
+      await databaseService.syncUserToLocal(user);
+      logger.info(`Admin user ${username} synced to local database`);
+    } catch (error) {
+      logger.warn(`Failed to sync admin user ${username} to local database:`, error);
+    }
+
+    logger.info(`Admin user ${username} created by admin: ${req.user.username}`);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Admin user created successfully',
+      data: {
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          phone: user.phone,
+          avatarUrl: user.avatarUrl
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Create admin user error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Create Cashier User endpoint (Admin only)
+router.post('/create-cashier', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { username, email, password, firstName, lastName, phone } = req.body;
+
+    // Validate required fields
+    if (!username || !email || !password || !firstName || !lastName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username, email, password, firstName, and lastName are required'
+      });
+    }
+
+    // Check if username already exists
+    const existingUser = await supabaseService().getUserByUsername(username);
+    if (existingUser.success && existingUser.data) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username already exists'
+      });
+    }
+
+    // Check if email already exists
+    const existingEmail = await supabaseService().getUserByEmail(email);
+    if (existingEmail.success && existingEmail.data) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email already exists'
+      });
+    }
+
+    // Create cashier user
+    const createResponse = await supabaseService().createUser({
+      username,
+      email,
+      password,
+      role: 'cashier',
+      firstName,
+      lastName,
+      phone: phone || undefined
+    });
+
+    if (!createResponse.success || !createResponse.data) {
+      return res.status(500).json({
+        success: false,
+        error: createResponse.error || 'Failed to create cashier user'
+      });
+    }
+
+    const user = createResponse.data;
+
+    // Generate JWT token
+    const token = jwtService.generateToken(user);
+
+    // Sync user to local database for offline access
+    try {
+      await databaseService.syncUserToLocal(user);
+      logger.info(`Cashier user ${username} synced to local database`);
+    } catch (error) {
+      logger.warn(`Failed to sync cashier user ${username} to local database:`, error);
+    }
+
+    logger.info(`Cashier user ${username} created by admin: ${req.user.username}`);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Cashier user created successfully',
+      data: {
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          phone: user.phone,
+          avatarUrl: user.avatarUrl
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Create cashier user error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Create Kitchen User endpoint (Admin only)
+router.post('/create-kitchen', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { username, email, password, firstName, lastName, phone } = req.body;
+
+    // Validate required fields
+    if (!username || !email || !password || !firstName || !lastName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username, email, password, firstName, and lastName are required'
+      });
+    }
+
+    // Check if username already exists
+    const existingUser = await supabaseService().getUserByUsername(username);
+    if (existingUser.success && existingUser.data) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username already exists'
+      });
+    }
+
+    // Check if email already exists
+    const existingEmail = await supabaseService().getUserByEmail(email);
+    if (existingEmail.success && existingEmail.data) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email already exists'
+      });
+    }
+
+    // Create kitchen user
+    const createResponse = await supabaseService().createUser({
+      username,
+      email,
+      password,
+      role: 'kitchen',
+      firstName,
+      lastName,
+      phone: phone || undefined
+    });
+
+    if (!createResponse.success || !createResponse.data) {
+      return res.status(500).json({
+        success: false,
+        error: createResponse.error || 'Failed to create kitchen user'
+      });
+    }
+
+    const user = createResponse.data;
+
+    // Generate JWT token
+    const token = jwtService.generateToken(user);
+
+    // Sync user to local database for offline access
+    try {
+      await databaseService.syncUserToLocal(user);
+      logger.info(`Kitchen user ${username} synced to local database`);
+    } catch (error) {
+      logger.warn(`Failed to sync kitchen user ${username} to local database:`, error);
+    }
+
+    logger.info(`Kitchen user ${username} created by admin: ${req.user.username}`);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Kitchen user created successfully',
+      data: {
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          phone: user.phone,
+          avatarUrl: user.avatarUrl
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Create kitchen user error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get all users (Admin only)
+router.get('/users', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { data: users, error } = await supabaseService().getClient()
+      .from('user_profiles')
+      .select('*')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      logger.error('Failed to fetch users:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch users'
+      });
+    }
+
+    // Map database users to API format
+    const mappedUsers = users?.map(user => ({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      role: user.role,
+      phone: user.phone,
+      avatarUrl: user.avatar_url,
+      isActive: user.is_active,
+      lastLogin: user.last_login,
+      createdAt: user.created_at,
+      updatedAt: user.updated_at
+    })) || [];
+
+    logger.info(`Users retrieved by admin: ${req.user.username}`);
+
+    return res.json({
+      success: true,
+      data: mappedUsers
+    });
+
+  } catch (error) {
+    logger.error('Get users error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Update user profile (Admin only)
+router.put('/users/:userId', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+    const { username, email, firstName, lastName, role, phone, isActive } = req.body;
+
+    // Validate userId parameter
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+
+    // Validate user exists
+    const userResponse = await supabaseService().getUserById(userId);
+    if (!userResponse.success || !userResponse.data) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Prepare update data
+    const updateData: any = {
+      updated_at: new Date().toISOString()
+    };
+
+    if (username !== undefined) updateData.username = username;
+    if (email !== undefined) updateData.email = email;
+    if (firstName !== undefined) updateData.first_name = firstName;
+    if (lastName !== undefined) updateData.last_name = lastName;
+    if (role !== undefined) updateData.role = role;
+    if (phone !== undefined) updateData.phone = phone;
+    if (typeof isActive === 'boolean') updateData.is_active = isActive;
+
+    // Update user
+    const { data, error } = await supabaseService().getClient()
+      .from('user_profiles')
+      .update(updateData)
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      logger.error('Failed to update user:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to update user'
+      });
+    }
+
+    // Map to API format
+    const updatedUser = {
+      id: data.id,
+      username: data.username,
+      email: data.email,
+      firstName: data.first_name,
+      lastName: data.last_name,
+      role: data.role,
+      phone: data.phone,
+      avatarUrl: data.avatar_url,
+      isActive: data.is_active,
+      lastLogin: data.last_login,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at
+    };
+
+    logger.info(`User ${userId} updated by admin: ${req.user.username}`);
+
+    return res.json({
+      success: true,
+      message: 'User updated successfully',
+      data: updatedUser
+    });
+
+  } catch (error) {
+    logger.error('Update user error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Delete user (Admin only)
+router.delete('/users/:userId', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+
+    // Validate userId parameter
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+
+    // Validate user exists
+    const userResponse = await supabaseService().getUserById(userId);
+    if (!userResponse.success || !userResponse.data) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Soft delete (set is_active to false)
+    const { error } = await supabaseService().getClient()
+      .from('user_profiles')
+      .update({ 
+        is_active: false,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userId);
+
+    if (error) {
+      logger.error('Failed to delete user:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to delete user'
+      });
+    }
+
+    logger.info(`User ${userId} deleted by admin: ${req.user.username}`);
+
+    return res.json({
+      success: true,
+      message: 'User deleted successfully'
+    });
+
+  } catch (error) {
+    logger.error('Delete user error:', error);
     return res.status(500).json({
       success: false,
       error: 'Internal server error'
