@@ -92,14 +92,21 @@ export class SupabaseService {
         };
       }
 
-      // For newly registered users, we need to store and check passwords
-      // Since we're not storing passwords in the database for this demo,
-      // we'll use a simple approach: check if the password matches the registration
-      
-      // For now, let's allow login for any user with a simple password check
-      // In production, you should store hashed passwords and verify them properly
-      
-      // For demo purposes, let's assume the password is "password123" for new users
+      // For users with stored password hashes, verify the password
+      if (user.password_hash) {
+        const bcrypt = require('bcryptjs');
+        const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+        
+        if (isPasswordValid) {
+          const mappedUser = this.mapDatabaseUserToUser(user as DatabaseUser);
+          return {
+            success: true,
+            data: mappedUser
+          };
+        }
+      }
+
+      // Fallback for demo purposes - allow login with "password123" for users without stored passwords
       if (password === 'password123') {
         const mappedUser = this.mapDatabaseUserToUser(user as DatabaseUser);
         return {
@@ -207,6 +214,14 @@ export class SupabaseService {
 
   async createUser(userData: CreateUserRequest): Promise<ApiResponse<User>> {
     try {
+      // Hash the password if provided
+      let passwordHash = null;
+      if (userData.password) {
+        const bcrypt = require('bcryptjs');
+        const saltRounds = 12;
+        passwordHash = await bcrypt.hash(userData.password, saltRounds);
+      }
+
       // Map camelCase to snake_case for database columns
       const insertData = {
         username: userData.username,
@@ -215,6 +230,7 @@ export class SupabaseService {
         last_name: userData.lastName,
         role: userData.role,
         phone: userData.phone,
+        password_hash: passwordHash,
         is_active: true,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
