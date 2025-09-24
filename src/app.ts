@@ -75,7 +75,7 @@ setTimeout(async () => {
 app.use(helmet());
 app.use(morgan('combined', { stream: { write: (message: string) => logger.info(message.trim()) } }));
 app.use(cors({
-  origin: process.env['CORS_ORIGIN'] || 'http://localhost:5173',
+  origin: ['https://dong-g-pastilan.vercel.app', 'http://localhost:5173'],
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
