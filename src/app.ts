@@ -74,7 +74,7 @@ setTimeout(async () => {
 
 // Middleware
 app.use(helmet());
-app.use(compression());
+app.use(compression() as express.RequestHandler);
 app.use(morgan('combined', { stream: { write: (message: string) => logger.info(message.trim()) } }));
 app.use(cors({
   origin: process.env['CORS_ORIGIN'] || 'http://localhost:5173',

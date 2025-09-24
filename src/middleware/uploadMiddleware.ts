@@ -1,4 +1,5 @@
 import multer from 'multer';
+import { Request, Response, NextFunction } from 'express';
 
 // Configure multer for file uploads
 export const upload = multer({
@@ -20,7 +21,7 @@ export const upload = multer({
 });
 
 // Additional validation middleware for image uploads
-export const validateImageUpload = (req: any, res: any, next: any) => {
+export const validateImageUpload = (req: Request, res: Response, next: NextFunction): void => {
   console.log('🔍 Upload validation - req.file:', req.file);
   console.log('🔍 Upload validation - req.files:', req.files);
   console.log('🔍 Upload validation - req.body:', req.body);
@@ -28,10 +29,11 @@ export const validateImageUpload = (req: any, res: any, next: any) => {
   if (req.file) {
     // Additional file size validation (in case multer limits don't work)
     if (req.file.size > 5 * 1024 * 1024) {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
         error: 'File size too large. Maximum size is 5MB.'
       });
+      return;
     }
 
     // Validate file extension
@@ -39,10 +41,11 @@ export const validateImageUpload = (req: any, res: any, next: any) => {
     const fileExtension = req.file.originalname.toLowerCase().substring(req.file.originalname.lastIndexOf('.'));
     
     if (!allowedExtensions.includes(fileExtension)) {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
         error: 'Invalid file extension. Only .jpg, .jpeg, .png, .webp, and .gif files are allowed.'
       });
+      return;
     }
   }
   
