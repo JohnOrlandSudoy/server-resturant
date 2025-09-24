@@ -1,6 +1,9 @@
 import multer from 'multer';
 import { Request, Response, NextFunction } from 'express';
 
+// Type-safe middleware wrapper to avoid Express type conflicts
+type MiddlewareFunction = (req: Request, res: Response, next: NextFunction) => void;
+
 // Configure multer for file uploads
 export const upload = multer({
   storage: multer.memoryStorage(),
@@ -21,7 +24,7 @@ export const upload = multer({
 });
 
 // Additional validation middleware for image uploads
-export const validateImageUpload = (req: Request, res: Response, next: NextFunction): void => {
+export const validateImageUpload: MiddlewareFunction = (req: Request, res: Response, next: NextFunction): void => {
   console.log('🔍 Upload validation - req.file:', req.file);
   console.log('🔍 Upload validation - req.files:', req.files);
   console.log('🔍 Upload validation - req.body:', req.body);

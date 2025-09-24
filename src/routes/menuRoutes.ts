@@ -310,7 +310,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 // Create new menu item with optional image upload
-router.post('/', upload.single('image'), validateImageUpload, async (req: Request, res: Response) => {
+router.post('/', upload.single('image') as any, validateImageUpload as any, async (req: Request, res: Response) => {
   try {
     const {
       name,
@@ -504,7 +504,7 @@ router.post('/', upload.single('image'), validateImageUpload, async (req: Reques
 });
 
 // Update menu item
-router.put('/:id', upload.single('image'), validateImageUpload, async (req: Request, res: Response) => {
+router.put('/:id', upload.single('image') as any, validateImageUpload as any, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     

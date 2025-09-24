@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -74,7 +73,6 @@ setTimeout(async () => {
 
 // Middleware
 app.use(helmet());
-app.use(compression() as express.RequestHandler);
 app.use(morgan('combined', { stream: { write: (message: string) => logger.info(message.trim()) } }));
 app.use(cors({
   origin: process.env['CORS_ORIGIN'] || 'http://localhost:5173',
