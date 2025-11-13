@@ -1699,6 +1699,418 @@ async getMenuItems(page: number = 1, limit: number = 50, filters?: {
     }
   }
 
+  // Waste reports
+  async getWasteReports(filters: {
+    startDate?: string;
+    endDate?: string;
+    status?: string;
+    reason?: string;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<ApiResponse<any[]>> {
+    try {
+      const {
+        startDate,
+        endDate,
+        status,
+        reason,
+        limit = 50,
+        offset = 0
+      } = filters;
+
+      let query = this.client
+        .from('waste_reports')
+        .select(`
+          *,
+          ingredient:ingredients!waste_reports_ingredient_id_fkey (id, name, unit, cost_per_unit, current_stock, min_stock_threshold),
+          reported_by_user:user_profiles!waste_reports_reported_by_fkey (id, username, first_name, last_name),
+          resolved_by_user:user_profiles!waste_reports_resolved_by_fkey (id, username, first_name, last_name),
+          order:orders!waste_reports_order_id_fkey (id, order_number, status)
+        `)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (startDate) {
+        query = query.gte('created_at', startDate);
+      }
+
+      if (endDate) {
+        query = query.lte('created_at', endDate);
+      }
+
+      if (status) {
+        query = query.eq('status', status);
+      }
+
+      if (reason) {
+        query = query.eq('reason', reason);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        logger.error('Waste reports query error:', error);
+        return {
+          success: false,
+          error: 'Failed to fetch waste reports'
+        };
+      }
+
+      return {
+        success: true,
+        data: data || []
+      };
+    } catch (error) {
+      logger.error('Get waste reports error:', error);
+      return {
+        success: false,
+        error: 'Failed to get waste reports'
+      };
+    }
+  }
+
+  async getWasteReportById(id: string): Promise<ApiResponse<any>> {
+    try {
+      const { data, error } = await this.client
+        .from('waste_reports')
+        .select(`
+          *,
+          ingredient:ingredients!waste_reports_ingredient_id_fkey (id, name, unit, cost_per_unit, current_stock, min_stock_threshold),
+          reported_by_user:user_profiles!waste_reports_reported_by_fkey (id, username, first_name, last_name),
+          resolved_by_user:user_profiles!waste_reports_resolved_by_fkey (id, username, first_name, last_name),
+          order:orders!waste_reports_order_id_fkey (id, order_number, status)
+        `)
+        .eq('id', id)
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          error: 'Waste report not found'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Get waste report by id error:', error);
+      return {
+        success: false,
+        error: 'Failed to get waste report'
+      };
+    }
+  }
+
+  async createWasteReport(reportData: {
+    ingredient_id: string;
+    quantity: number;
+    unit?: string;
+    reason: string;
+    reported_by: string;
+    order_id?: string;
+    notes?: string;
+    photo_url?: string;
+  }): Promise<ApiResponse<any>> {
+    try {
+      const ingredientResult = await this.getIngredientById(reportData.ingredient_id);
+
+      if (!ingredientResult.success || !ingredientResult.data) {
+        return {
+          success: false,
+          error: ingredientResult.error || 'Ingredient not found'
+        };
+      }
+
+      const ingredient = ingredientResult.data;
+      const quantity = parseFloat(String(reportData.quantity));
+
+      if (!quantity || isNaN(quantity) || quantity <= 0) {
+        return {
+          success: false,
+          error: 'Quantity must be greater than zero'
+        };
+      }
+
+      const unit = reportData.unit || ingredient.unit;
+      const costPerUnit = ingredient.cost_per_unit || 0;
+      const costImpact = parseFloat((costPerUnit * quantity).toFixed(2));
+
+      const insertData = {
+        ingredient_id: reportData.ingredient_id,
+        order_id: reportData.order_id || null,
+        quantity,
+        unit,
+        reason: reportData.reason,
+        cost_impact: costImpact,
+        reported_by: reportData.reported_by,
+        notes: reportData.notes || null,
+        photo_url: reportData.photo_url || null
+      };
+
+      const { data, error } = await this.client
+        .from('waste_reports')
+        .insert(insertData)
+        .select(`
+          *,
+          ingredient:ingredients!waste_reports_ingredient_id_fkey (id, name, unit, cost_per_unit, current_stock, min_stock_threshold),
+          reported_by_user:user_profiles!waste_reports_reported_by_fkey (id, username, first_name, last_name),
+          resolved_by_user:user_profiles!waste_reports_resolved_by_fkey (id, username, first_name, last_name),
+          order:orders!waste_reports_order_id_fkey (id, order_number, status)
+        `)
+        .single();
+
+      if (error) {
+        logger.error('Create waste report supabase error:', error);
+        return {
+          success: false,
+          error: 'Failed to create waste report'
+        };
+      }
+
+      // Adjust ingredient stock
+      const currentStock = ingredient.current_stock || 0;
+      const updatedStock = Math.max(0, currentStock - quantity);
+
+      const stockUpdate = await this.updateIngredientStock(reportData.ingredient_id, updatedStock);
+
+      if (!stockUpdate.success) {
+        logger.warn('Waste report stock update failed:', stockUpdate.error);
+      }
+
+      // Record stock movement
+      const stockMovementResult = await this.createStockMovement({
+        ingredient_id: reportData.ingredient_id,
+        movement_type: 'out',
+        quantity,
+        reason: 'waste',
+        reference_number: data.id,
+        notes: reportData.notes || `Waste reported (${reportData.reason})`,
+        performed_by: reportData.reported_by
+      });
+
+      if (!stockMovementResult.success) {
+        logger.warn('Waste report stock movement failed:', stockMovementResult.error);
+      }
+
+      await this.evaluateWasteAlerts(reportData.ingredient_id);
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Create waste report error:', error);
+      return {
+        success: false,
+        error: 'Failed to create waste report'
+      };
+    }
+  }
+
+  async updateWasteReport(id: string, updateData: {
+    status?: 'pending' | 'reviewed' | 'resolved';
+    notes?: string;
+    photo_url?: string;
+    resolved_by?: string;
+  }): Promise<ApiResponse<any>> {
+    try {
+      const updates: Record<string, any> = {
+        notes: updateData.notes ?? null,
+        photo_url: updateData.photo_url ?? null
+      };
+
+      if (updateData.status) {
+        updates['status'] = updateData.status;
+      }
+
+      if (updateData.status === 'resolved') {
+        updates['resolved_at'] = new Date().toISOString();
+        updates['resolved_by'] = updateData.resolved_by || null;
+      } else if (updateData.status === 'reviewed') {
+        updates['resolved_by'] = updateData.resolved_by || null;
+      }
+
+      const { data, error } = await this.client
+        .from('waste_reports')
+        .update(updates)
+        .eq('id', id)
+        .select(`
+          *,
+          ingredient:ingredients!waste_reports_ingredient_id_fkey (id, name, unit, cost_per_unit, current_stock, min_stock_threshold),
+          reported_by_user:user_profiles!waste_reports_reported_by_fkey (id, username, first_name, last_name),
+          resolved_by_user:user_profiles!waste_reports_resolved_by_fkey (id, username, first_name, last_name),
+          order:orders!waste_reports_order_id_fkey (id, order_number, status)
+        `)
+        .single();
+
+      if (error) {
+        logger.error('Update waste report supabase error:', error);
+        return {
+          success: false,
+          error: 'Failed to update waste report'
+        };
+      }
+
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      logger.error('Update waste report error:', error);
+      return {
+        success: false,
+        error: 'Failed to update waste report'
+      };
+    }
+  }
+
+  async getWasteAnalytics(filters: { startDate?: string; endDate?: string } = {}): Promise<ApiResponse<any>> {
+    try {
+      let query = this.client
+        .from('waste_reports')
+        .select('reason, quantity, cost_impact');
+
+      if (filters.startDate) {
+        query = query.gte('created_at', filters.startDate);
+      }
+
+      if (filters.endDate) {
+        query = query.lte('created_at', filters.endDate);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        logger.error('Waste analytics query error:', error);
+        return {
+          success: false,
+          error: 'Failed to fetch waste analytics'
+        };
+      }
+
+      const reports = data || [];
+      const totalReports = reports.length;
+      const totals = reports.reduce(
+        (acc: { quantity: number; cost: number }, report: any) => {
+          acc.quantity += Number(report.quantity) || 0;
+          acc.cost += Number(report.cost_impact) || 0;
+          return acc;
+        },
+        { quantity: 0, cost: 0 }
+      );
+
+      const byReasonMap = new Map<string, { count: number; quantity: number; cost: number }>();
+
+      reports.forEach((report: any) => {
+        const reason = report.reason || 'unknown';
+        if (!byReasonMap.has(reason)) {
+          byReasonMap.set(reason, { count: 0, quantity: 0, cost: 0 });
+        }
+        const entry = byReasonMap.get(reason)!;
+        entry.count += 1;
+        entry.quantity += Number(report.quantity) || 0;
+        entry.cost += Number(report.cost_impact) || 0;
+      });
+
+      const byReason = Array.from(byReasonMap.entries()).map(([reason, stats]) => ({
+        reason,
+        ...stats
+      }));
+
+      return {
+        success: true,
+        data: {
+          total_reports: totalReports,
+          total_quantity: totals.quantity,
+          total_cost: Number(totals.cost.toFixed(2)),
+          by_reason: byReason
+        }
+      };
+    } catch (error) {
+      logger.error('Get waste analytics error:', error);
+      return {
+        success: false,
+        error: 'Failed to get waste analytics'
+      };
+    }
+  }
+
+  private async evaluateWasteAlerts(ingredientId: string): Promise<void> {
+    try {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+      const { data, error } = await this.client
+        .from('waste_reports')
+        .select('id, quantity, cost_impact')
+        .eq('ingredient_id', ingredientId)
+        .gte('created_at', sevenDaysAgo);
+
+      if (error) {
+        logger.warn('Evaluate waste alerts query failed:', error);
+        return;
+      }
+
+      const incidentCount = data?.length || 0;
+      const totalCost = (data || []).reduce((sum: number, report: any) => {
+        return sum + (Number(report.cost_impact) || 0);
+      }, 0);
+
+      if (incidentCount === 0) {
+        return;
+      }
+
+      const ingredientResult = await this.getIngredientById(ingredientId);
+
+      if (!ingredientResult.success || !ingredientResult.data) {
+        return;
+      }
+
+      const ingredient = ingredientResult.data;
+      const costThreshold = (ingredient.cost_per_unit || 0) * (ingredient.min_stock_threshold || 5);
+
+      if (incidentCount < 3 && totalCost < costThreshold) {
+        return;
+      }
+
+      const { data: existingAlerts, error: alertError } = await this.client
+        .from('stock_alerts')
+        .select('id')
+        .eq('ingredient_id', ingredientId)
+        .eq('alert_type', 'high_waste')
+        .eq('is_resolved', false)
+        .limit(1);
+
+      if (alertError) {
+        logger.warn('Evaluate waste alerts existing alert check failed:', alertError);
+        return;
+      }
+
+      if (existingAlerts && existingAlerts.length > 0) {
+        return;
+      }
+
+      const message = `High waste detected for ${ingredient.name}. ${incidentCount} incidents in the last 7 days.`;
+
+      const { error: insertError } = await this.client
+        .from('stock_alerts')
+        .insert({
+          ingredient_id: ingredientId,
+          alert_type: 'high_waste',
+          current_stock: ingredient.current_stock || 0,
+          threshold_value: incidentCount,
+          message
+        });
+
+      if (insertError) {
+        logger.warn('Failed to insert high waste alert:', insertError);
+      }
+    } catch (error) {
+      logger.warn('Evaluate waste alerts error:', error);
+    }
+  }
+
   // Menu item ingredients
   async getMenuItemIngredients(menuItemId: string): Promise<ApiResponse<any[]>> {
     try {
