@@ -19,6 +19,7 @@ import syncRoutes from './routes/syncRoutes';
 import networkRoutes from './routes/networkRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import offlinePaymentRoutes from './routes/offlinePaymentRoutes';
+import adminSalesRoutes from './routes/adminSalesRoutes';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler';
@@ -174,6 +175,8 @@ app.use('/api/employees', authMiddleware, employeeRoutes);
 app.use('/api/sync', authMiddleware, syncRoutes);
 app.use('/api/network', authMiddleware, networkRoutes);
 app.use('/api/offline-payments', authMiddleware, offlinePaymentRoutes);
+// Admin sales analytics routes (admin-only middleware applied per-route)
+app.use('/api/admin/sales', adminSalesRoutes);
 // Payment routes - webhook needs to be unauthenticated, others need auth
 // Register webhook route first (unauthenticated)
 app.use('/api/payments/webhook', paymentRoutes);

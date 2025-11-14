@@ -1,0 +1,893 @@
+{
+  "info": {
+    "_postman_id": "admin-sales-api-collection",
+    "name": "Admin Sales API - Manual Testing",
+    "description": "Complete collection for testing all 6 admin sales endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1️⃣ Best Sellers This Week",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test: Check response status",
+              "pm.test('Status code is 200', function() {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// Test: Check response format",
+              "pm.test('Response is JSON', function() {",
+              "    pm.response.to.be.json;",
+              "});",
+              "",
+              "// Test: Check success flag",
+              "pm.test('Success flag is true', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.be.true;",
+              "});",
+              "",
+              "// Test: Check data structure",
+              "pm.test('Response contains data array', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('data');",
+              "    pm.expect(jsonData.data).to.be.an('array');",
+              "});",
+              "",
+              "// Test: Check best seller fields",
+              "pm.test('Best sellers have required fields', function() {",
+              "    var jsonData = pm.response.json();",
+              "    if (jsonData.data.length > 0) {",
+              "        var item = jsonData.data[0];",
+              "        pm.expect(item).to.have.property('rank');",
+              "        pm.expect(item).to.have.property('menu_item_name');",
+              "        pm.expect(item).to.have.property('total_quantity');",
+              "        pm.expect(item).to.have.property('total_revenue');",
+              "    }",
+              "});",
+              "",
+              "// Store week and year for reference",
+              "pm.test('Week and year are present', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('week');",
+              "    pm.expect(jsonData).to.have.property('year');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Pre-request setup",
+              "console.log('Testing: Best Sellers This Week');"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/sales/best-sellers",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "sales",
+            "best-sellers"
+          ]
+        },
+        "description": "Get top 10 best-selling items for the current week\n\n**Response:**\n- rank: Item ranking (1-10)\n- menu_item_name: Name of item\n- total_quantity: Total units sold\n- total_revenue: Total revenue\n- average_daily_sales: Average daily sales\n- week: Current week number\n- year: Current year"
+      },
+      "response": [
+        {
+          "name": "Success Response",
+          "originalRequest": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/sales/best-sellers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "sales",
+                "best-sellers"
+              ]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"rank\": 1,\n      \"menu_item_id\": \"uuid-123\",\n      \"menu_item_name\": \"Fried Chicken\",\n      \"total_quantity\": 45,\n      \"total_revenue\": \"2250.00\",\n      \"average_daily_sales\": \"321.43\"\n    },\n    {\n      \"rank\": 2,\n      \"menu_item_id\": \"uuid-456\",\n      \"menu_item_name\": \"Adobo\",\n      \"total_quantity\": 38,\n      \"total_revenue\": \"1900.00\",\n      \"average_daily_sales\": \"271.43\"\n    }\n  ],\n  \"week\": 45,\n  \"year\": 2025\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "2️⃣ Best Sellers By Specific Week",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test: Check response status",
+              "pm.test('Status code is 200', function() {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// Test: Check success flag",
+              "pm.test('Success flag is true', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.be.true;",
+              "});",
+              "",
+              "// Test: Check data is array",
+              "pm.test('Data is an array', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.data).to.be.an('array');",
+              "});",
+              "",
+              "// Test: Week matches query parameter",
+              "pm.test('Week and year in response', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.week).to.equal(pm.collectionVariables.get('testWeek'));",
+              "    pm.expect(jsonData.year).to.equal(pm.collectionVariables.get('testYear'));",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Set test week and year if not already set",
+              "if (!pm.collectionVariables.get('testWeek')) {",
+              "    pm.collectionVariables.set('testWeek', '45');",
+              "    pm.collectionVariables.set('testYear', '2025');",
+              "}",
+              "console.log('Testing: Best Sellers for Week ' + pm.collectionVariables.get('testWeek'));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/sales/best-sellers/week?week={{testWeek}}&year={{testYear}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "sales",
+            "best-sellers",
+            "week"
+          ],
+          "query": [
+            {
+              "key": "week",
+              "value": "{{testWeek}}",
+              "description": "ISO week number (1-53)"
+            },
+            {
+              "key": "year",
+              "value": "{{testYear}}",
+              "description": "Year (e.g., 2025)"
+            }
+          ]
+        },
+        "description": "Get top 10 best-selling items for a specific week\n\n**Query Parameters:**\n- week (required): ISO week number (1-53)\n- year (required): Year (e.g., 2025)\n\n**Try:**\n- Week 45, Year 2025\n- Week 44, Year 2025\n- Week 43, Year 2025"
+      }
+    },
+    {
+      "name": "3️⃣ Sales Records - Paginated with Filters",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test: Check response status",
+              "pm.test('Status code is 200', function() {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// Test: Check pagination structure",
+              "pm.test('Pagination info present', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('pagination');",
+              "    pm.expect(jsonData.pagination).to.have.property('page');",
+              "    pm.expect(jsonData.pagination).to.have.property('limit');",
+              "    pm.expect(jsonData.pagination).to.have.property('total');",
+              "    pm.expect(jsonData.pagination).to.have.property('totalPages');",
+              "});",
+              "",
+              "// Test: Check data array",
+              "pm.test('Data array is present', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.data).to.be.an('array');",
+              "});",
+              "",
+              "// Test: Check sales record fields",
+              "pm.test('Sales records have required fields', function() {",
+              "    var jsonData = pm.response.json();",
+              "    if (jsonData.data.length > 0) {",
+              "        var record = jsonData.data[0];",
+              "        pm.expect(record).to.have.property('order_number');",
+              "        pm.expect(record).to.have.property('menu_item_name');",
+              "        pm.expect(record).to.have.property('quantity');",
+              "        pm.expect(record).to.have.property('total_amount');",
+              "        pm.expect(record).to.have.property('payment_status');",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Set pagination defaults",
+              "if (!pm.collectionVariables.get('page')) {",
+              "    pm.collectionVariables.set('page', '1');",
+              "    pm.collectionVariables.set('limit', '10');",
+              "}",
+              "console.log('Testing: Sales Records Page ' + pm.collectionVariables.get('page'));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/sales/records?page={{page}}&limit={{limit}}&paymentStatus=paid",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "sales",
+            "records"
+          ],
+          "query": [
+            {
+              "key": "page",
+              "value": "{{page}}",
+              "description": "Page number (default: 1)"
+            },
+            {
+              "key": "limit",
+              "value": "{{limit}}",
+              "description": "Records per page (default: 50, max: 500)"
+            },
+            {
+              "key": "paymentStatus",
+              "value": "paid",
+              "description": "Filter by payment status: paid, unpaid, refunded"
+            },
+            {
+              "key": "paymentMethod",
+              "value": "cash",
+              "disabled": true,
+              "description": "Filter by payment method: cash, gcash, card, paymongo"
+            },
+            {
+              "key": "startDate",
+              "value": "2025-01-01",
+              "disabled": true,
+              "description": "Filter by start date (YYYY-MM-DD)"
+            },
+            {
+              "key": "endDate",
+              "value": "2025-01-31",
+              "disabled": true,
+              "description": "Filter by end date (YYYY-MM-DD)"
+            }
+          ]
+        },
+        "description": "Get paginated sales records with optional filters\n\n**Query Parameters:**\n- page: Page number (default: 1)\n- limit: Records per page (default: 50, max: 500)\n- paymentStatus: paid, unpaid, refunded\n- paymentMethod: cash, gcash, card, paymongo\n- startDate: YYYY-MM-DD\n- endDate: YYYY-MM-DD\n\n**Test Combinations:**\n1. Default pagination (page=1, limit=10)\n2. Page 2 with limit 20\n3. Filter by payment method (enable paymentMethod)\n4. Filter by date range (enable startDate & endDate)\n5. Max limit (limit=500)"
+      }
+    },
+    {
+      "name": "4️⃣ Sales Records by Date Range",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test: Check response status",
+              "pm.test('Status code is 200', function() {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// Test: Check date range fields",
+              "pm.test('Response contains date range', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('startDate');",
+              "    pm.expect(jsonData).to.have.property('endDate');",
+              "});",
+              "",
+              "// Test: Check data array",
+              "pm.test('Data is an array', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.data).to.be.an('array');",
+              "});",
+              "",
+              "// Test: All dates within range",
+              "pm.test('All sales within date range', function() {",
+              "    var jsonData = pm.response.json();",
+              "    var startDate = new Date(jsonData.startDate);",
+              "    var endDate = new Date(jsonData.endDate);",
+              "    jsonData.data.forEach(function(record) {",
+              "        var recordDate = new Date(record.sale_date);",
+              "        pm.expect(recordDate.getTime()).to.be.greaterThanOrEqual(startDate.getTime());",
+              "        pm.expect(recordDate.getTime()).to.be.lessThanOrEqual(endDate.getTime());",
+              "    });",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Set date range for testing",
+              "var today = new Date();",
+              "var endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());",
+              "var startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30);",
+              "",
+              "var formatDate = function(date) {",
+              "    return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');",
+              "};",
+              "",
+              "if (!pm.collectionVariables.get('rangeStartDate')) {",
+              "    pm.collectionVariables.set('rangeStartDate', formatDate(startDate));",
+              "    pm.collectionVariables.set('rangeEndDate', formatDate(endDate));",
+              "}",
+              "console.log('Testing: Date Range ' + pm.collectionVariables.get('rangeStartDate') + ' to ' + pm.collectionVariables.get('rangeEndDate'));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/sales/records/range?startDate={{rangeStartDate}}&endDate={{rangeEndDate}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "sales",
+            "records",
+            "range"
+          ],
+          "query": [
+            {
+              "key": "startDate",
+              "value": "{{rangeStartDate}}",
+              "description": "Start date (YYYY-MM-DD) - required"
+            },
+            {
+              "key": "endDate",
+              "value": "{{rangeEndDate}}",
+              "description": "End date (YYYY-MM-DD) - required"
+            }
+          ]
+        },
+        "description": "Get sales records for a specific date range\n\n**Query Parameters (Required):**\n- startDate: Start date (YYYY-MM-DD)\n- endDate: End date (YYYY-MM-DD)\n\n**Test Dates:**\n- Last 30 days (default)\n- Last 7 days\n- Specific month (2025-01-01 to 2025-01-31)\n- Single day (startDate = endDate)\n- Quarter (2025-01-01 to 2025-03-31)"
+      }
+    },
+    {
+      "name": "5️⃣ Daily Sales Summary",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test: Check response status",
+              "pm.test('Status code is 200', function() {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// Test: Check summary fields",
+              "pm.test('Summary contains all required fields', function() {",
+              "    var jsonData = pm.response.json();",
+              "    if (jsonData.data) {",
+              "        pm.expect(jsonData.data).to.have.property('sale_date');",
+              "        pm.expect(jsonData.data).to.have.property('total_orders');",
+              "        pm.expect(jsonData.data).to.have.property('total_items_sold');",
+              "        pm.expect(jsonData.data).to.have.property('total_revenue');",
+              "        pm.expect(jsonData.data).to.have.property('cash_sales');",
+              "        pm.expect(jsonData.data).to.have.property('gcash_sales');",
+              "        pm.expect(jsonData.data).to.have.property('card_sales');",
+              "        pm.expect(jsonData.data).to.have.property('average_order_value');",
+              "    }",
+              "});",
+              "",
+              "// Test: Check numeric values",
+              "pm.test('Numeric fields are numbers', function() {",
+              "    var jsonData = pm.response.json();",
+              "    if (jsonData.data) {",
+              "        pm.expect(typeof jsonData.data.total_orders).to.equal('number');",
+              "        pm.expect(typeof jsonData.data.total_items_sold).to.equal('number');",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Set today's date for testing",
+              "if (!pm.collectionVariables.get('summaryDate')) {",
+              "    var today = new Date();",
+              "    var dateStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');",
+              "    pm.collectionVariables.set('summaryDate', dateStr);",
+              "}",
+              "console.log('Testing: Daily Summary for ' + pm.collectionVariables.get('summaryDate'));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/sales/summary?date={{summaryDate}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "sales",
+            "summary"
+          ],
+          "query": [
+            {
+              "key": "date",
+              "value": "{{summaryDate}}",
+              "description": "Date (YYYY-MM-DD) - optional, defaults to today"
+            }
+          ]
+        },
+        "description": "Get daily sales summary\n\n**Query Parameters:**\n- date: Date (YYYY-MM-DD) - optional, defaults to today\n\n**Response Includes:**\n- total_orders: Number of orders\n- total_items_sold: Total items sold\n- total_revenue: Total revenue\n- total_discount: Total discount given\n- net_revenue: Revenue after discounts\n- cash_sales: Revenue from cash\n- gcash_sales: Revenue from GCash\n- card_sales: Revenue from card\n- paymongo_sales: Revenue from PayMongo\n- average_order_value: Average order value\n- top_selling_item_name: Most sold item\n- top_selling_item_qty: Quantity of top item\n\n**Test Dates:**\n- Today (default)\n- Yesterday\n- Specific date (2025-01-15)"
+      }
+    },
+    {
+      "name": "6️⃣ Revenue Analytics",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test: Check response status",
+              "pm.test('Status code is 200', function() {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// Test: Check summary structure",
+              "pm.test('Summary contains required fields', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('summary');",
+              "    pm.expect(jsonData.summary).to.have.property('totalRevenue');",
+              "    pm.expect(jsonData.summary).to.have.property('totalDiscount');",
+              "    pm.expect(jsonData.summary).to.have.property('netRevenue');",
+              "});",
+              "",
+              "// Test: Check byDate object",
+              "pm.test('ByDate breakdown present', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('byDate');",
+              "    pm.expect(jsonData.byDate).to.be.an('object');",
+              "});",
+              "",
+              "// Test: Check byPaymentMethod object",
+              "pm.test('ByPaymentMethod breakdown present', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('byPaymentMethod');",
+              "    pm.expect(jsonData.byPaymentMethod).to.be.an('object');",
+              "});",
+              "",
+              "// Test: Net revenue = total - discount",
+              "pm.test('Net revenue calculation is correct', function() {",
+              "    var jsonData = pm.response.json();",
+              "    var expectedNet = parseFloat(jsonData.summary.totalRevenue) - parseFloat(jsonData.summary.totalDiscount);",
+              "    pm.expect(parseFloat(jsonData.summary.netRevenue)).to.equal(expectedNet);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Set analytics date range",
+              "if (!pm.collectionVariables.get('analyticsStart')) {",
+              "    var today = new Date();",
+              "    var monthStart = new Date(today.getFullYear(), today.getMonth(), 1);",
+              "    ",
+              "    var formatDate = function(date) {",
+              "        return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');",
+              "    };",
+              "    ",
+              "    pm.collectionVariables.set('analyticsStart', formatDate(monthStart));",
+              "    pm.collectionVariables.set('analyticsEnd', formatDate(today));",
+              "}",
+              "console.log('Testing: Revenue Analytics from ' + pm.collectionVariables.get('analyticsStart') + ' to ' + pm.collectionVariables.get('analyticsEnd'));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/sales/analytics/revenue?startDate={{analyticsStart}}&endDate={{analyticsEnd}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "sales",
+            "analytics",
+            "revenue"
+          ],
+          "query": [
+            {
+              "key": "startDate",
+              "value": "{{analyticsStart}}",
+              "description": "Start date (YYYY-MM-DD) - required"
+            },
+            {
+              "key": "endDate",
+              "value": "{{analyticsEnd}}",
+              "description": "End date (YYYY-MM-DD) - required"
+            }
+          ]
+        },
+        "description": "Get revenue analytics for a date range\n\n**Query Parameters (Required):**\n- startDate: Start date (YYYY-MM-DD)\n- endDate: End date (YYYY-MM-DD)\n\n**Response Includes:**\n\n**Summary:**\n- totalRevenue: Total revenue in period\n- totalDiscount: Total discount given\n- netRevenue: Revenue after discounts\n\n**By Date Breakdown:**\n- revenue: Daily revenue\n- discount: Daily discount\n- net: Daily net revenue\n\n**By Payment Method Breakdown:**\n- cash: Cash revenue\n- gcash: GCash revenue\n- card: Card revenue\n- paymongo: PayMongo revenue\n\n**Test Ranges:**\n- This month (default)\n- Last 7 days\n- Last 30 days\n- Last quarter\n- Year-to-date"
+      }
+    },
+    {
+      "name": "❌ Test - Unauthorized (No Token)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test: Should return 401 or 403",
+              "pm.test('Unauthorized returns 4xx status', function() {",
+              "    pm.expect(pm.response.code).to.be.oneOf([401, 403, 400]);",
+              "});",
+              "",
+              "// Test: Check error message",
+              "pm.test('Error message present', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('error').or.have.property('message');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/sales/best-sellers",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "sales",
+            "best-sellers"
+          ]
+        },
+        "description": "Test endpoint without authentication - should fail\n\nExpected: 401/403 Unauthorized"
+      }
+    },
+    {
+      "name": "❌ Test - Invalid Date Format",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test: Should return error",
+              "pm.test('Invalid date returns error', function() {",
+              "    pm.expect(pm.response.code).to.be.oneOf([400, 500]);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/sales/records/range?startDate=invalid&endDate=also-invalid",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "sales",
+            "records",
+            "range"
+          ],
+          "query": [
+            {
+              "key": "startDate",
+              "value": "invalid"
+            },
+            {
+              "key": "endDate",
+              "value": "also-invalid"
+            }
+          ]
+        },
+        "description": "Test with invalid date format - should fail\n\nExpected: Error response"
+      }
+    },
+    {
+      "name": "❌ Test - Missing Required Parameters",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test: Should return 400",
+              "pm.test('Missing parameters returns 400', function() {",
+              "    pm.expect(pm.response.code).to.equal(400);",
+              "});",
+              "",
+              "// Test: Error message",
+              "pm.test('Error message explains missing params', function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.message).to.include('required');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/sales/records/range",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "sales",
+            "records",
+            "range"
+          ]
+        },
+        "description": "Test without required query parameters - should fail\n\nExpected: 400 Bad Request"
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "your-admin-jwt-token-here",
+      "type": "string"
+    },
+    {
+      "key": "page",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "limit",
+      "value": "10",
+      "type": "string"
+    },
+    {
+      "key": "testWeek",
+      "value": "45",
+      "type": "string"
+    },
+    {
+      "key": "testYear",
+      "value": "2025",
+      "type": "string"
+    },
+    {
+      "key": "rangeStartDate",
+      "value": "2025-01-01",
+      "type": "string"
+    },
+    {
+      "key": "rangeEndDate",
+      "value": "2025-01-31",
+      "type": "string"
+    },
+    {
+      "key": "summaryDate",
+      "value": "2025-01-15",
+      "type": "string"
+    },
+    {
+      "key": "analyticsStart",
+      "value": "2025-01-01",
+      "type": "string"
+    },
+    {
+      "key": "analyticsEnd",
+      "value": "2025-01-31",
+      "type": "string"
+    }
+  ]
+}

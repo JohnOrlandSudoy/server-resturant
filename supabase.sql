@@ -287,7 +287,7 @@ CREATE TABLE public.paymongo_payments (
 CREATE TABLE public.stock_alerts (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
   ingredient_id uuid NOT NULL,
-  alert_type character varying NOT NULL CHECK (alert_type::text = ANY (ARRAY['low_stock'::character varying, 'out_of_stock'::character varying, 'expiry_warning'::character varying, 'high_waste'::character varying]::text[])),
+  alert_type character varying NOT NULL CHECK (alert_type::text = ANY (ARRAY['low_stock'::character varying, 'out_of_stock'::character varying, 'expiry_warning'::character varying]::text[])),
   current_stock numeric NOT NULL,
   threshold_value numeric NOT NULL,
   message text NOT NULL,
@@ -312,28 +312,6 @@ CREATE TABLE public.stock_movements (
   CONSTRAINT stock_movements_pkey PRIMARY KEY (id),
   CONSTRAINT stock_movements_ingredient_id_fkey FOREIGN KEY (ingredient_id) REFERENCES public.ingredients(id),
   CONSTRAINT stock_movements_performed_by_fkey FOREIGN KEY (performed_by) REFERENCES public.user_profiles(id)
-);
-
-CREATE TABLE public.waste_reports (
-  id uuid NOT NULL DEFAULT uuid_generate_v4(),
-  ingredient_id uuid NOT NULL,
-  order_id uuid,
-  quantity numeric NOT NULL,
-  unit character varying,
-  reason character varying NOT NULL CHECK (reason::text = ANY (ARRAY['spillage'::character varying, 'burn'::character varying, 'expiry'::character varying, 'quality_issue'::character varying, 'over_preparation'::character varying, 'spoilage'::character varying]::text[])),
-  cost_impact numeric,
-  reported_by uuid NOT NULL,
-  status character varying NOT NULL DEFAULT 'pending'::character varying CHECK (status::text = ANY (ARRAY['pending'::character varying, 'reviewed'::character varying, 'resolved'::character varying]::text[])),
-  notes text,
-  photo_url character varying,
-  created_at timestamp with time zone DEFAULT now(),
-  resolved_at timestamp with time zone,
-  resolved_by uuid,
-  CONSTRAINT waste_reports_pkey PRIMARY KEY (id),
-  CONSTRAINT waste_reports_ingredient_id_fkey FOREIGN KEY (ingredient_id) REFERENCES public.ingredients(id),
-  CONSTRAINT waste_reports_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id),
-  CONSTRAINT waste_reports_reported_by_fkey FOREIGN KEY (reported_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT waste_reports_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.user_profiles (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
@@ -360,4 +338,25 @@ CREATE TABLE public.user_profiles (
   password_reset_token character varying,
   password_reset_expires timestamp with time zone,
   CONSTRAINT user_profiles_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.waste_reports (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  ingredient_id uuid NOT NULL,
+  order_id uuid,
+  quantity numeric NOT NULL,
+  unit character varying,
+  reason character varying NOT NULL CHECK (reason::text = ANY (ARRAY['spillage'::character varying, 'burn'::character varying, 'expiry'::character varying, 'quality_issue'::character varying, 'over_preparation'::character varying, 'spoilage'::character varying]::text[])),
+  cost_impact numeric,
+  reported_by uuid NOT NULL,
+  status character varying NOT NULL DEFAULT 'pending'::character varying CHECK (status::text = ANY (ARRAY['pending'::character varying, 'reviewed'::character varying, 'resolved'::character varying]::text[])),
+  notes text,
+  photo_url character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  resolved_at timestamp with time zone,
+  resolved_by uuid,
+  CONSTRAINT waste_reports_pkey PRIMARY KEY (id),
+  CONSTRAINT waste_reports_ingredient_id_fkey FOREIGN KEY (ingredient_id) REFERENCES public.ingredients(id),
+  CONSTRAINT waste_reports_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id),
+  CONSTRAINT waste_reports_reported_by_fkey FOREIGN KEY (reported_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT waste_reports_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.user_profiles(id)
 );
