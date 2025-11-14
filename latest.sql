@@ -1,6 +1,27 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
+CREATE TABLE public.daily_sales_summary (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  sale_date date NOT NULL UNIQUE,
+  total_orders integer NOT NULL DEFAULT 0,
+  total_items_sold integer NOT NULL DEFAULT 0,
+  total_revenue numeric NOT NULL DEFAULT 0,
+  total_discount numeric NOT NULL DEFAULT 0,
+  net_revenue numeric NOT NULL DEFAULT 0,
+  cash_sales numeric DEFAULT 0,
+  gcash_sales numeric DEFAULT 0,
+  card_sales numeric DEFAULT 0,
+  paymongo_sales numeric DEFAULT 0,
+  average_order_value numeric DEFAULT 0,
+  top_selling_item_id uuid,
+  top_selling_item_name character varying,
+  top_selling_item_qty integer,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT daily_sales_summary_pkey PRIMARY KEY (id),
+  CONSTRAINT daily_sales_summary_top_item_fkey FOREIGN KEY (top_selling_item_id) REFERENCES public.menu_items(id)
+);
 CREATE TABLE public.discounts (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
   code character varying NOT NULL UNIQUE,
@@ -30,6 +51,19 @@ CREATE TABLE public.email_verification_tokens (
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT email_verification_tokens_pkey PRIMARY KEY (id),
   CONSTRAINT email_verification_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id)
+);
+CREATE TABLE public.hourly_sales_summary (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  sale_date date NOT NULL,
+  hour_of_day integer NOT NULL,
+  total_orders integer DEFAULT 0,
+  total_items_sold integer DEFAULT 0,
+  total_revenue numeric DEFAULT 0,
+  total_discount numeric DEFAULT 0,
+  net_revenue numeric DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT hourly_sales_summary_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.ingredients (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
@@ -284,6 +318,35 @@ CREATE TABLE public.paymongo_payments (
   CONSTRAINT paymongo_payments_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id),
   CONSTRAINT paymongo_payments_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id)
 );
+CREATE TABLE public.sales_records (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  order_id uuid NOT NULL,
+  order_number character varying NOT NULL,
+  menu_item_id uuid NOT NULL,
+  menu_item_name character varying NOT NULL,
+  quantity integer NOT NULL CHECK (quantity >= 0),
+  unit_price numeric NOT NULL CHECK (unit_price >= 0::numeric),
+  total_amount numeric NOT NULL CHECK (total_amount >= 0::numeric),
+  discount_amount numeric DEFAULT 0,
+  net_amount numeric NOT NULL CHECK (net_amount >= 0::numeric),
+  customer_name character varying,
+  order_type character varying NOT NULL,
+  payment_method character varying CHECK ((payment_method::text = ANY (ARRAY['cash'::character varying, 'gcash'::character varying, 'card'::character varying, 'paymongo'::character varying, 'qrph'::character varying]::text[])) OR payment_method IS NULL),
+  payment_status character varying NOT NULL CHECK (payment_status::text = ANY (ARRAY['paid'::character varying, 'unpaid'::character varying, 'refunded'::character varying, 'pending'::character varying, 'failed'::character varying, 'cancelled'::character varying]::text[])),
+  sale_date date NOT NULL,
+  sale_time time without time zone NOT NULL,
+  hour_of_day integer NOT NULL,
+  day_of_week integer NOT NULL,
+  week_number integer NOT NULL,
+  month_number integer NOT NULL,
+  year_number integer NOT NULL,
+  recorded_by uuid NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT sales_records_pkey PRIMARY KEY (id),
+  CONSTRAINT sales_records_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id),
+  CONSTRAINT sales_records_menu_item_id_fkey FOREIGN KEY (menu_item_id) REFERENCES public.menu_items(id),
+  CONSTRAINT sales_records_recorded_by_fkey FOREIGN KEY (recorded_by) REFERENCES public.user_profiles(id)
+);
 CREATE TABLE public.stock_alerts (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
   ingredient_id uuid NOT NULL,
@@ -338,4 +401,44 @@ CREATE TABLE public.user_profiles (
   password_reset_token character varying,
   password_reset_expires timestamp with time zone,
   CONSTRAINT user_profiles_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.waste_reports (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  ingredient_id uuid NOT NULL,
+  order_id uuid,
+  quantity numeric NOT NULL,
+  unit character varying,
+  reason character varying NOT NULL CHECK (reason::text = ANY (ARRAY['spillage'::character varying, 'burn'::character varying, 'expiry'::character varying, 'quality_issue'::character varying, 'over_preparation'::character varying, 'spoilage'::character varying]::text[])),
+  cost_impact numeric,
+  reported_by uuid NOT NULL,
+  status character varying NOT NULL DEFAULT 'pending'::character varying CHECK (status::text = ANY (ARRAY['pending'::character varying, 'reviewed'::character varying, 'resolved'::character varying]::text[])),
+  notes text,
+  photo_url character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  resolved_at timestamp with time zone,
+  resolved_by uuid,
+  CONSTRAINT waste_reports_pkey PRIMARY KEY (id),
+  CONSTRAINT waste_reports_ingredient_id_fkey FOREIGN KEY (ingredient_id) REFERENCES public.ingredients(id),
+  CONSTRAINT waste_reports_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id),
+  CONSTRAINT waste_reports_reported_by_fkey FOREIGN KEY (reported_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT waste_reports_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.user_profiles(id)
+);
+CREATE TABLE public.weekly_best_sellers (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  week_number integer NOT NULL,
+  year_number integer NOT NULL,
+  menu_item_id uuid NOT NULL,
+  menu_item_name character varying NOT NULL,
+  category_id uuid,
+  category_name character varying,
+  total_quantity_sold integer NOT NULL CHECK (total_quantity_sold >= 0),
+  total_revenue numeric NOT NULL,
+  average_daily_sales numeric NOT NULL,
+  rank integer NOT NULL CHECK (rank > 0),
+  growth_percentage numeric,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT weekly_best_sellers_pkey PRIMARY KEY (id),
+  CONSTRAINT weekly_best_sellers_menu_item_fkey FOREIGN KEY (menu_item_id) REFERENCES public.menu_items(id),
+  CONSTRAINT weekly_best_sellers_category_fkey FOREIGN KEY (category_id) REFERENCES public.menu_categories(id)
 );
