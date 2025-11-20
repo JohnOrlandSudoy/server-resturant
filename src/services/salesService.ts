@@ -17,6 +17,18 @@ function getSupabaseClient(): SupabaseClient {
   return supabase;
 }
 
+function pad(n: number): string { return n < 10 ? `0${n}` : `${n}`; }
+
+function getIsoWeekStartDateString(year: number, week: number): string {
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const dayOfWeek = jan4.getUTCDay() || 7;
+  const mondayOfWeek1 = new Date(jan4);
+  mondayOfWeek1.setUTCDate(jan4.getUTCDate() - (dayOfWeek - 1));
+  const weekStart = new Date(mondayOfWeek1);
+  weekStart.setUTCDate(mondayOfWeek1.getUTCDate() + (week - 1) * 7);
+  return `${weekStart.getUTCFullYear()}-${pad(weekStart.getUTCMonth() + 1)}-${pad(weekStart.getUTCDate())}`;
+}
+
 /**
  * Sales Service - Admin Analytics
  * Handles best sellers, sales records, and revenue analytics
@@ -91,54 +103,27 @@ export class SalesService {
       const now = new Date();
       const weekNumber = getWeekNumber(now);
       const yearNumber = now.getFullYear();
+      const weekStart = getIsoWeekStartDateString(yearNumber, weekNumber);
 
-      const { data, error } = await db
-        .from('sales_records')
-        .select(
-          `
-          menu_item_id,
-          menu_item_name,
-          quantity,
-          total_amount
-        `
-        )
-        .eq('week_number', weekNumber)
-        .eq('year_number', yearNumber)
-        .eq('payment_status', 'paid');
-
+      const { data, error } = await db.rpc('get_week_top5_best_sellers', { p_week_start: weekStart });
       if (error) throw error;
 
-      // Aggregate data
-      const aggregated = new Map<string, any>();
-      data.forEach((record: any) => {
-        const key = record.menu_item_id;
-        const qty = Number(record.quantity) || 0;
-        const amt = Number(record.total_amount) || 0;
-        if (!aggregated.has(key)) {
-          aggregated.set(key, {
-            menu_item_id: record.menu_item_id,
-            menu_item_name: record.menu_item_name,
-            total_quantity: 0,
-            total_revenue: 0,
-          });
-        }
-        const item = aggregated.get(key);
-        item.total_quantity += qty;
-        item.total_revenue += amt;
-      });
+      if (!data || data.length === 0) {
+        return { success: true, data: [], week: weekNumber, year: yearNumber };
+      }
 
-      // Convert to array, sort by quantity, and add rank
-      const bestSellers = Array.from(aggregated.values())
-        .sort((a: any, b: any) => b.total_quantity - a.total_quantity)
-        .slice(0, 10)
-        .map((item: any, index: number) => ({
-          rank: index + 1,
-          menu_item_id: item.menu_item_id,
-          menu_item_name: item.menu_item_name,
-          total_quantity: item.total_quantity,
-          total_revenue: item.total_revenue.toFixed(2),
-          average_daily_sales: (item.total_quantity / 7).toFixed(2),
-        }));
+      if (data.length === 1 && data[0].message === 'no sales') {
+        return { success: true, data: [], week: weekNumber, year: yearNumber, message: 'no sales' };
+      }
+
+      const bestSellers = data.map((row: any) => ({
+        rank: row.rank,
+        menu_item_id: row.menu_item_id,
+        menu_item_name: row.menu_item_name,
+        total_quantity: Number(row.total_quantity_sold) || 0,
+        total_revenue: (Number(row.total_revenue) || 0).toFixed(2),
+        average_daily_sales: (Number(row.average_daily_sales) || 0).toFixed(2),
+      }));
 
       return { success: true, data: bestSellers, week: weekNumber, year: yearNumber };
     } catch (error) {
@@ -153,52 +138,26 @@ export class SalesService {
   static async getBestSellersByWeek(weekNumber: number, yearNumber: number) {
     try {
       const db = getSupabaseClient();
-      const { data, error } = await db
-        .from('sales_records')
-        .select(
-          `
-          menu_item_id,
-          menu_item_name,
-          quantity,
-          total_amount
-        `
-        )
-        .eq('week_number', weekNumber)
-        .eq('year_number', yearNumber)
-        .eq('payment_status', 'paid');
-
+      const weekStart = getIsoWeekStartDateString(yearNumber, weekNumber);
+      const { data, error } = await db.rpc('get_week_top5_best_sellers', { p_week_start: weekStart });
       if (error) throw error;
 
-      // Aggregate data
-      const aggregated = new Map<string, any>();
-      data.forEach((record: any) => {
-        const key = record.menu_item_id;
-        const qty = Number(record.quantity) || 0;
-        const amt = Number(record.total_amount) || 0;
-        if (!aggregated.has(key)) {
-          aggregated.set(key, {
-            menu_item_id: record.menu_item_id,
-            menu_item_name: record.menu_item_name,
-            total_quantity: 0,
-            total_revenue: 0,
-          });
-        }
-        const item = aggregated.get(key);
-        item.total_quantity += qty;
-        item.total_revenue += amt;
-      });
+      if (!data || data.length === 0) {
+        return { success: true, data: [], week: weekNumber, year: yearNumber };
+      }
 
-      // Convert to array, sort by quantity, and add rank
-      const bestSellers = Array.from(aggregated.values())
-        .sort((a: any, b: any) => b.total_quantity - a.total_quantity)
-        .map((item: any, index: number) => ({
-          rank: index + 1,
-          menu_item_id: item.menu_item_id,
-          menu_item_name: item.menu_item_name,
-          total_quantity: item.total_quantity,
-          total_revenue: item.total_revenue.toFixed(2),
-          average_daily_sales: (item.total_quantity / 7).toFixed(2),
-        }));
+      if (data.length === 1 && data[0].message === 'no sales') {
+        return { success: true, data: [], week: weekNumber, year: yearNumber, message: 'no sales' };
+      }
+
+      const bestSellers = data.map((row: any, index: number) => ({
+        rank: row.rank ?? index + 1,
+        menu_item_id: row.menu_item_id,
+        menu_item_name: row.menu_item_name,
+        total_quantity: Number(row.total_quantity_sold) || 0,
+        total_revenue: (Number(row.total_revenue) || 0).toFixed(2),
+        average_daily_sales: (Number(row.average_daily_sales) || 0).toFixed(2),
+      }));
 
       return { success: true, data: bestSellers, week: weekNumber, year: yearNumber };
     } catch (error) {

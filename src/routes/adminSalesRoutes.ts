@@ -55,7 +55,7 @@ router.get('/best-sellers', adminOnly, async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: 'Failed to fetch best sellers',
-      message: error instanceof Error ? error.message : 'Unknown error',
+      message: (error as any)?.message || 'Unknown error',
     });
   }
 });
@@ -95,7 +95,7 @@ router.get('/best-sellers/week', adminOnly, async (req: Request, res: Response) 
     return res.status(500).json({
       success: false,
       error: 'Failed to fetch best sellers',
-      message: error instanceof Error ? error.message : 'Unknown error',
+      message: (error as any)?.message || 'Unknown error',
     });
   }
 });

@@ -1,6 +1,27 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
+CREATE TABLE public.daily_sales_summary (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  sale_date date NOT NULL UNIQUE,
+  total_orders integer NOT NULL DEFAULT 0,
+  total_items_sold integer NOT NULL DEFAULT 0,
+  total_revenue numeric NOT NULL DEFAULT 0,
+  total_discount numeric NOT NULL DEFAULT 0,
+  net_revenue numeric NOT NULL DEFAULT 0,
+  cash_sales numeric DEFAULT 0,
+  gcash_sales numeric DEFAULT 0,
+  card_sales numeric DEFAULT 0,
+  paymongo_sales numeric DEFAULT 0,
+  average_order_value numeric DEFAULT 0,
+  top_selling_item_id uuid,
+  top_selling_item_name character varying,
+  top_selling_item_qty integer,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT daily_sales_summary_pkey PRIMARY KEY (id),
+  CONSTRAINT daily_sales_summary_top_item_fkey FOREIGN KEY (top_selling_item_id) REFERENCES public.menu_items(id)
+);
 CREATE TABLE public.discounts (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
   code character varying NOT NULL UNIQUE,
@@ -30,6 +51,19 @@ CREATE TABLE public.email_verification_tokens (
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT email_verification_tokens_pkey PRIMARY KEY (id),
   CONSTRAINT email_verification_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id)
+);
+CREATE TABLE public.hourly_sales_summary (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  sale_date date NOT NULL,
+  hour_of_day integer NOT NULL,
+  total_orders integer DEFAULT 0,
+  total_items_sold integer DEFAULT 0,
+  total_revenue numeric DEFAULT 0,
+  total_discount numeric DEFAULT 0,
+  net_revenue numeric DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT hourly_sales_summary_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.ingredients (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
@@ -284,6 +318,35 @@ CREATE TABLE public.paymongo_payments (
   CONSTRAINT paymongo_payments_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id),
   CONSTRAINT paymongo_payments_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id)
 );
+CREATE TABLE public.sales_records (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  order_id uuid NOT NULL,
+  order_number character varying NOT NULL,
+  menu_item_id uuid NOT NULL,
+  menu_item_name character varying NOT NULL,
+  quantity integer NOT NULL CHECK (quantity >= 0),
+  unit_price numeric NOT NULL CHECK (unit_price >= 0::numeric),
+  total_amount numeric NOT NULL CHECK (total_amount >= 0::numeric),
+  discount_amount numeric DEFAULT 0,
+  net_amount numeric NOT NULL CHECK (net_amount >= 0::numeric),
+  customer_name character varying,
+  order_type character varying NOT NULL,
+  payment_method character varying CHECK ((payment_method::text = ANY (ARRAY['cash'::character varying, 'gcash'::character varying, 'card'::character varying, 'paymongo'::character varying, 'qrph'::character varying]::text[])) OR payment_method IS NULL),
+  payment_status character varying NOT NULL CHECK (payment_status::text = ANY (ARRAY['paid'::character varying, 'unpaid'::character varying, 'refunded'::character varying, 'pending'::character varying, 'failed'::character varying, 'cancelled'::character varying]::text[])),
+  sale_date date NOT NULL,
+  sale_time time without time zone NOT NULL,
+  hour_of_day integer NOT NULL,
+  day_of_week integer NOT NULL,
+  week_number integer NOT NULL,
+  month_number integer NOT NULL,
+  year_number integer NOT NULL,
+  recorded_by uuid NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT sales_records_pkey PRIMARY KEY (id),
+  CONSTRAINT sales_records_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id),
+  CONSTRAINT sales_records_menu_item_id_fkey FOREIGN KEY (menu_item_id) REFERENCES public.menu_items(id),
+  CONSTRAINT sales_records_recorded_by_fkey FOREIGN KEY (recorded_by) REFERENCES public.user_profiles(id)
+);
 CREATE TABLE public.stock_alerts (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
   ingredient_id uuid NOT NULL,
@@ -345,7 +408,7 @@ CREATE TABLE public.waste_reports (
   order_id uuid,
   quantity numeric NOT NULL,
   unit character varying,
-  reason character varying NOT NULL CHECK (reason::text = ANY (ARRAY['spillage'::character varying, 'burn'::character varying, 'expiry'::character varying, 'quality_issue'::character varying, 'over_preparation'::character varying, 'spoilage'::character varying]::text[])),
+  reason character varying NOT NULL CHECK (reason::text = ANY (ARRAY['spoilage'::character varying, 'overproduction'::character varying, 'prep_error'::character varying, 'contamination'::character varying, 'expired'::character varying, 'other'::character varying]::text[])),
   cost_impact numeric,
   reported_by uuid NOT NULL,
   status character varying NOT NULL DEFAULT 'pending'::character varying CHECK (status::text = ANY (ARRAY['pending'::character varying, 'reviewed'::character varying, 'resolved'::character varying]::text[])),
@@ -360,3 +423,199 @@ CREATE TABLE public.waste_reports (
   CONSTRAINT waste_reports_reported_by_fkey FOREIGN KEY (reported_by) REFERENCES public.user_profiles(id),
   CONSTRAINT waste_reports_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.user_profiles(id)
 );
+CREATE TABLE public.weekly_best_sellers (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  week_number integer NOT NULL,
+  year_number integer NOT NULL,
+  menu_item_id uuid NOT NULL,
+  menu_item_name character varying NOT NULL,
+  category_id uuid,
+  category_name character varying,
+  total_quantity_sold integer NOT NULL CHECK (total_quantity_sold >= 0),
+  total_revenue numeric NOT NULL,
+  average_daily_sales numeric NOT NULL,
+  rank integer NOT NULL CHECK (rank > 0),
+  growth_percentage numeric,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT weekly_best_sellers_pkey PRIMARY KEY (id),
+  CONSTRAINT weekly_best_sellers_menu_item_fkey FOREIGN KEY (menu_item_id) REFERENCES public.menu_items(id),
+  CONSTRAINT weekly_best_sellers_category_fkey FOREIGN KEY (category_id) REFERENCES public.menu_categories(id)
+);
+CREATE OR REPLACE FUNCTION public.refresh_weekly_best_sellers(p_week_start date DEFAULT date_trunc('week', current_date))
+RETURNS void AS $$
+DECLARE
+  v_week_start date := p_week_start;
+  v_week_end date := p_week_start + interval '7 days';
+  v_week_number int := EXTRACT(WEEK FROM v_week_start);
+  v_year_number int := EXTRACT(YEAR FROM v_week_start);
+BEGIN
+  DELETE FROM public.weekly_best_sellers WHERE week_number = v_week_number AND year_number = v_year_number;
+  WITH current_sales AS (
+    SELECT oi.menu_item_id,
+           SUM(oi.quantity) AS total_quantity_sold,
+           SUM(oi.total_price) AS total_revenue
+    FROM public.order_items oi
+    JOIN public.orders o ON o.id = oi.order_id
+    WHERE o.completed_at >= v_week_start AND o.completed_at < v_week_end AND (
+      o.status = 'completed' OR EXISTS (
+        SELECT 1 FROM public.order_status_history osh WHERE osh.order_id = o.id AND osh.status = 'completed'
+      )
+    )
+    GROUP BY oi.menu_item_id
+  ),
+  previous_sales AS (
+    SELECT oi.menu_item_id,
+           SUM(oi.quantity) AS prev_qty
+    FROM public.order_items oi
+    JOIN public.orders o ON o.id = oi.order_id
+    WHERE o.completed_at >= v_week_start - interval '7 days' AND o.completed_at < v_week_start AND (
+      o.status = 'completed' OR EXISTS (
+        SELECT 1 FROM public.order_status_history osh WHERE osh.order_id = o.id AND osh.status = 'completed'
+      )
+    )
+    GROUP BY oi.menu_item_id
+  ),
+  ranked AS (
+    SELECT cs.menu_item_id,
+           cs.total_quantity_sold,
+           cs.total_revenue,
+           COALESCE(ps.prev_qty, 0) AS prev_qty,
+           RANK() OVER (ORDER BY cs.total_quantity_sold DESC, cs.total_revenue DESC, cs.menu_item_id) AS rnk
+    FROM current_sales cs
+    LEFT JOIN previous_sales ps ON ps.menu_item_id = cs.menu_item_id
+  )
+  INSERT INTO public.weekly_best_sellers (
+    week_number,
+    year_number,
+    menu_item_id,
+    menu_item_name,
+    category_id,
+    category_name,
+    total_quantity_sold,
+    total_revenue,
+    average_daily_sales,
+    rank,
+    growth_percentage
+  )
+  SELECT v_week_number,
+         v_year_number,
+         mi.id,
+         mi.name,
+         mi.category_id,
+         mc.name,
+         r.total_quantity_sold,
+         r.total_revenue,
+         r.total_quantity_sold / 7.0,
+         r.rnk,
+         CASE WHEN r.prev_qty > 0 THEN ((r.total_quantity_sold - r.prev_qty) / r.prev_qty) * 100 ELSE NULL END
+  FROM ranked r
+  JOIN public.menu_items mi ON mi.id = r.menu_item_id
+  LEFT JOIN public.menu_categories mc ON mc.id = mi.category_id
+  WHERE r.rnk <= 5;
+END;
+$$ LANGUAGE plpgsql;
+CREATE OR REPLACE VIEW public.current_week_best_sellers_top5 AS
+WITH week_bounds AS (
+  SELECT date_trunc('week', current_date) AS ws, date_trunc('week', current_date) + interval '7 days' AS we
+),
+sales AS (
+  SELECT oi.menu_item_id, SUM(oi.quantity) AS total_quantity_sold, SUM(oi.total_price) AS total_revenue
+  FROM public.order_items oi
+  JOIN public.orders o ON o.id = oi.order_id
+  JOIN week_bounds wb ON TRUE
+  WHERE o.completed_at >= wb.ws AND o.completed_at < wb.we AND (
+    o.status = 'completed' OR EXISTS (
+      SELECT 1 FROM public.order_status_history osh WHERE osh.order_id = o.id AND osh.status = 'completed'
+    )
+  )
+  GROUP BY oi.menu_item_id
+),
+ranked AS (
+  SELECT s.menu_item_id, s.total_quantity_sold, s.total_revenue,
+         RANK() OVER (ORDER BY s.total_quantity_sold DESC, s.total_revenue DESC, s.menu_item_id) AS rnk
+  FROM sales s
+)
+SELECT mi.id AS menu_item_id,
+       mi.name AS menu_item_name,
+       mi.category_id,
+       mc.name AS category_name,
+       r.total_quantity_sold,
+       r.total_revenue,
+       r.total_quantity_sold / 7.0 AS average_daily_sales,
+       r.rnk AS rank
+FROM ranked r
+JOIN public.menu_items mi ON mi.id = r.menu_item_id
+LEFT JOIN public.menu_categories mc ON mc.id = mi.category_id
+WHERE r.rnk <= 5;
+CREATE OR REPLACE FUNCTION public.get_week_top5_best_sellers(p_week_start date)
+RETURNS TABLE (
+  menu_item_id uuid,
+  menu_item_name text,
+  total_quantity_sold integer,
+  total_revenue numeric,
+  average_daily_sales numeric,
+  rank integer,
+  message text
+)
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_week_start date := p_week_start;
+  v_week_end date := p_week_start + interval '7 days';
+  has_rows boolean;
+BEGIN
+  SELECT EXISTS (
+    WITH completed_orders AS (
+      SELECT DISTINCT o.id AS order_id
+      FROM public.orders o
+      WHERE o.completed_at >= v_week_start AND o.completed_at < v_week_end AND o.status = 'completed'
+      UNION
+      SELECT DISTINCT osh.order_id
+      FROM public.order_status_history osh
+      WHERE osh.status = 'completed' AND osh.created_at >= v_week_start AND osh.created_at < v_week_end
+    )
+    SELECT 1 FROM completed_orders
+  ) INTO has_rows;
+
+  IF NOT has_rows THEN
+    RETURN QUERY SELECT NULL::uuid, NULL::text, 0::integer, 0::numeric, 0::numeric, NULL::integer, 'no sales'::text;
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+  WITH completed_orders AS (
+    SELECT DISTINCT o.id AS order_id
+    FROM public.orders o
+    WHERE o.completed_at >= v_week_start AND o.completed_at < v_week_end AND o.status = 'completed'
+    UNION
+    SELECT DISTINCT osh.order_id
+    FROM public.order_status_history osh
+    WHERE osh.status = 'completed' AND osh.created_at >= v_week_start AND osh.created_at < v_week_end
+  ),
+  sales AS (
+    SELECT oi.menu_item_id,
+           SUM(oi.quantity)::integer AS total_quantity_sold,
+           SUM(oi.total_price) AS total_revenue
+    FROM public.order_items oi
+    JOIN completed_orders co ON co.order_id = oi.order_id
+    GROUP BY oi.menu_item_id
+  ),
+  ranked AS (
+    SELECT s.menu_item_id,
+           s.total_quantity_sold,
+           s.total_revenue,
+           ROW_NUMBER() OVER (ORDER BY s.total_quantity_sold DESC, s.total_revenue DESC, s.menu_item_id) AS rnk
+    FROM sales s
+  )
+  SELECT mi.id AS menu_item_id,
+         mi.name::text AS menu_item_name,
+         r.total_quantity_sold,
+         r.total_revenue,
+         (r.total_quantity_sold::numeric / 7.0)::numeric AS average_daily_sales,
+         r.rnk::integer AS rank,
+         NULL::text AS message
+  FROM ranked r
+  JOIN public.menu_items mi ON mi.id = r.menu_item_id
+  WHERE r.rnk <= 5;
+END;
+$$;
